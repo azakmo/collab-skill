@@ -13,6 +13,10 @@ Let Claude Code (CC) do only the thinking — planning, writing specs, reviewing
 >
 > **Languages:** English (default) and Simplified Chinese. The skill, task/report templates, executor instructions and generated text all come in both. Choose with `"language": "en" | "zh-CN"` in `roster.json` (or the `COLLAB_LANG` environment variable). Task files written in either language are parsed regardless of the setting.
 
+![Ledger page: pass rate and tokens per executor, CC vs executor spend per project, token trends](docs/images/ledger-en.png)
+
+*The ledger page of the built-in console (sample data).*
+
 ## Install
 
 1. Clone anywhere, e.g. `C:\collab`, and point the user environment variable `COLLAB_HOME` at it:

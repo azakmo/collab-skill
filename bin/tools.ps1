@@ -1,4 +1,4 @@
-﻿# Shared helpers for the collab runners. Dot-source this file.
+# Shared helpers for the collab runners. Dot-source this file.
 
 $script:CollabHome = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 
@@ -131,7 +131,7 @@ function ConvertTo-ArgString([string[]]$ArgList) {
     }) -join ' '
 }
 
-$script:LedgerPath = Join-Path $PSScriptRoot '..\ledger.csv'
+$script:LedgerPath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\ledger.csv'))
 $script:LedgerColumns = 'time', 'project', 'task', 'type', 'executor', 'model', 'flags', 'exit', 'minutes', 'tokens', 'self_status', 'review', 'note'
 
 # Task/report fields are written as "- 执行者：x" (zh-CN) or "- Executor: x" (en); both are accepted.

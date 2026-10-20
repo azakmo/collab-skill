@@ -13,6 +13,10 @@
 
 > 平台：Windows + PowerShell 7（pwsh）。执行者通过 [Codex CLI](https://github.com/openai/codex) 运行。
 
+![账本页面：各执行者的通过率和 token、各项目 CC 与执行者的花销、token 趋势](docs/images/ledger-zh-CN.png)
+
+*控制台自带的账本页面（示例数据）。*
+
 ## 安装
 
 1. 克隆到任意目录，例如 `C:\collab`，并设置用户环境变量 `COLLAB_HOME` 指向它：
