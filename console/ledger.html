@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>账本</title>
+<title>Ledger</title>
 <style>
 :root{--bg:#f6f7f9;--card:#fff;--fg:#1d2330;--muted:#6b7385;--line:#e2e5eb;--accent:#2f6fec;--ok:#1a8f5a;--warn:#b7791f;--bad:#c53030;--chip:#eef2fb}
 @media (prefers-color-scheme:dark){:root{--bg:#14171d;--card:#1c2028;--fg:#e6e9ef;--muted:#9aa3b5;--line:#2c323d;--accent:#6b9bff;--ok:#3fbf86;--warn:#e0a84a;--bad:#f07171;--chip:#252c3a}}
@@ -17,6 +17,7 @@ h3{font-size:14px;margin:20px 0 10px}
 .header-row{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:4px}
 a{color:var(--accent);text-decoration:none;font-size:14px}
 a:hover{text-decoration:underline}
+#lang-btn{margin-left:auto;font-size:13px;padding:3px 10px}
 button{background:var(--chip);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:4px 12px;font:inherit;cursor:pointer}
 button:hover{filter:brightness(0.95)}
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:24px}
@@ -32,13 +33,15 @@ tr.total{font-weight:bold;background:var(--chip)}
 .project-bar-title{font-weight:600;font-size:13px;margin-bottom:6px}
 .bar-svg{width:100%;max-width:650px;height:auto;display:block;overflow:visible}
 </style>
+<script src="/i18n.js"></script>
 </head>
 <body>
 <main>
   <div class="header-row">
-    <h1>账本</h1>
-    <a href="/">← 名册</a>
-    <button id="refresh-btn" onclick="load()">刷新</button>
+    <h1 data-i18n="ledgerTitle"></h1>
+    <a href="/" data-i18n="backToRoster"></a>
+    <button id="refresh-btn" onclick="load()" data-i18n="refresh"></button>
+    <button id="lang-btn" onclick="toggleLang()"></button>
   </div>
   <p class="sub" id="meta-info"></p>
   <div id="error"></div>
@@ -50,7 +53,7 @@ tr.total{font-weight:bold;background:var(--chip)}
 
 <script>
 const SVG_NS = 'http://www.w3.org/2000/svg';
-const ERR_PREFIX = String.fromCharCode(21152, 36733, 22833, 36133, 65306);
+const ERR_PREFIX = t('loadFail');
 
 function $(id) {
   return document.getElementById(id);
@@ -65,9 +68,7 @@ function svgEl(tag, attrs = {}) {
 }
 
 function fmtToken(n) {
-  if (n === null || n === undefined) return '—';
-  if (n < 10000) return String(n);
-  return (n / 10000).toFixed(1) + '万';
+  return fmtTokenI18n(n);
 }
 
 function fmtRate(r) {
@@ -77,7 +78,7 @@ function fmtRate(r) {
 
 function fmtMinutes(x) {
   if (x === null || x === undefined) return '—';
-  return x + ' 分';
+  return t('minutes', x);
 }
 
 function fmtRatio(r) {
@@ -97,7 +98,7 @@ function formatExecutorBreakdown(p) {
   const entries = Object.entries(p.byExecutor);
   if (entries.length === 0) return total;
   const parts = entries.map(([exec, tok]) => `${exec} ${fmtToken(tok)}`).join(' / ');
-  return `${total}（${parts}）`;
+  return LANG === 'zh-CN' ? `${total}（${parts}）` : `${total} (${parts})`;
 }
 
 function renderByExec(data) {
@@ -105,7 +106,7 @@ function renderByExec(data) {
   sec.innerHTML = '';
   
   const h2 = document.createElement('h2');
-  h2.textContent = '按执行者 × 任务类型';
+  h2.textContent = t('byExecType');
   sec.appendChild(h2);
 
   const byExecType = data.byExecType || [];
@@ -114,7 +115,7 @@ function renderByExec(data) {
   if (byExecType.length === 0 && byExecutor.length === 0) {
     const p = document.createElement('p');
     p.className = 'sub';
-    p.textContent = '还没有数据';
+    p.textContent = t('noData');
     sec.appendChild(p);
     return;
   }
@@ -133,12 +134,12 @@ function renderByExec(data) {
   table.innerHTML = `
     <thead>
       <tr>
-        <th>执行者</th>
-        <th>类型</th>
-        <th>次数</th>
-        <th>通过率</th>
-        <th>平均 token</th>
-        <th>平均用时</th>
+        <th>${t('thExecutor')}</th>
+        <th>${t('thType')}</th>
+        <th>${t('thRuns')}</th>
+        <th>${t('thPassRate')}</th>
+        <th>${t('thAvgTokens')}</th>
+        <th>${t('thAvgTime')}</th>
       </tr>
     </thead>
   `;
@@ -187,7 +188,7 @@ function renderByExec(data) {
       tr.appendChild(tdExec);
 
       const tdType = document.createElement('td');
-      tdType.textContent = '全部';
+      tdType.textContent = t('all');
       tr.appendChild(tdType);
 
       const tdRuns = document.createElement('td');
@@ -220,14 +221,14 @@ function renderProjects(data) {
   sec.innerHTML = '';
 
   const h2 = document.createElement('h2');
-  h2.textContent = '按项目：CC 与执行者花销';
+  h2.textContent = t('byProject');
   sec.appendChild(h2);
 
   const projects = data.projects || [];
   if (projects.length === 0) {
     const p = document.createElement('p');
     p.className = 'sub';
-    p.textContent = '还没有数据';
+    p.textContent = t('noData');
     sec.appendChild(p);
     return;
   }
@@ -238,13 +239,13 @@ function renderProjects(data) {
   table.innerHTML = `
     <thead>
       <tr>
-        <th>项目</th>
-        <th>派活次数</th>
-        <th>执行者 token</th>
-        <th>CC 等效 token</th>
-        <th>CC 原始 token</th>
-        <th>CC 用时</th>
-        <th>CC / 执行者</th>
+        <th>${t('thProject')}</th>
+        <th>${t('thDispatches')}</th>
+        <th>${t('thExecTokens')}</th>
+        <th>${t('thCcEquiv')}</th>
+        <th>${t('thCcRaw')}</th>
+        <th>${t('thCcTime')}</th>
+        <th>${t('thRatio')}</th>
       </tr>
     </thead>
   `;
@@ -289,7 +290,7 @@ function renderProjects(data) {
   sec.appendChild(wrap);
 
   const maxToken = Math.max(1, ...projects.flatMap(p => [p.executorTokens || 0, p.ccEquiv || 0]));
-  const barMaxW = 420;
+  const barMaxW = 400;
 
   const barsDiv = document.createElement('div');
   barsDiv.style.marginTop = '20px';
@@ -312,24 +313,24 @@ function renderProjects(data) {
     const wCC = Math.round(((p.ccEquiv || 0) / maxToken) * barMaxW);
 
     const lE = svgEl('text', { x: '0', y: '16', 'font-size': '12', fill: 'var(--muted)' });
-    lE.textContent = '执行者';
+    lE.textContent = t('barExecutor');
     svg.appendChild(lE);
 
-    const rE = svgEl('rect', { x: '55', y: '5', width: String(Math.max(wExec, 0)), height: '14', rx: '3', fill: 'var(--accent)' });
+    const rE = svgEl('rect', { x: '75', y: '5', width: String(Math.max(wExec, 0)), height: '14', rx: '3', fill: 'var(--accent)' });
     svg.appendChild(rE);
 
-    const vE = svgEl('text', { x: String(55 + wExec + 8), y: '17', 'font-size': '12', fill: 'var(--fg)' });
+    const vE = svgEl('text', { x: String(75 + wExec + 8), y: '17', 'font-size': '12', fill: 'var(--fg)' });
     vE.textContent = fmtToken(p.executorTokens);
     svg.appendChild(vE);
 
     const lC = svgEl('text', { x: '0', y: '42', 'font-size': '12', fill: 'var(--muted)' });
-    lC.textContent = 'CC 等效';
+    lC.textContent = t('barCc');
     svg.appendChild(lC);
 
-    const rC = svgEl('rect', { x: '55', y: '31', width: String(Math.max(wCC, 0)), height: '14', rx: '3', fill: 'var(--warn)' });
+    const rC = svgEl('rect', { x: '75', y: '31', width: String(Math.max(wCC, 0)), height: '14', rx: '3', fill: 'var(--warn)' });
     svg.appendChild(rC);
 
-    const vC = svgEl('text', { x: String(55 + wCC + 8), y: '43', 'font-size': '12', fill: 'var(--fg)' });
+    const vC = svgEl('text', { x: String(75 + wCC + 8), y: '43', 'font-size': '12', fill: 'var(--fg)' });
     vC.textContent = fmtToken(p.ccEquiv);
     svg.appendChild(vC);
 
@@ -345,7 +346,7 @@ function renderTrend(data) {
   sec.innerHTML = '';
 
   const h2 = document.createElement('h2');
-  h2.textContent = '每次协同的 token 趋势';
+  h2.textContent = t('trend');
   sec.appendChild(h2);
 
   const sessions = data.sessions || [];
@@ -354,7 +355,7 @@ function renderTrend(data) {
   if (sessions.length === 0 && runs.length === 0) {
     const p = document.createElement('p');
     p.className = 'sub';
-    p.textContent = '还没有数据';
+    p.textContent = t('noData');
     sec.appendChild(p);
     return;
   }
@@ -365,7 +366,7 @@ function renderTrend(data) {
   if (sessions.length === 0) {
     const p = document.createElement('p');
     p.className = 'sub';
-    p.textContent = '还没有数据';
+    p.textContent = t('noData');
     sessionsBox.appendChild(p);
   } else {
     const svgW = 800;
@@ -473,7 +474,7 @@ function renderTrend(data) {
         fill: 'var(--accent)'
       });
       const tE = svgEl('title');
-      tE.textContent = `${s.project} (${s.start}–${s.end})\n执行者 token: ${s.executorTokens ?? 0}（${fmtToken(s.executorTokens)}）`;
+      tE.textContent = `${s.project} (${s.start}–${s.end})\n${t('tipExecTokens')}: ${s.executorTokens ?? 0} (${fmtToken(s.executorTokens)})`;
       cE.appendChild(tE);
       svg.appendChild(cE);
 
@@ -484,23 +485,23 @@ function renderTrend(data) {
         fill: 'var(--warn)'
       });
       const tC = svgEl('title');
-      tC.textContent = `${s.project} (${s.start}–${s.end})\nCC 等效 token: ${s.ccEquiv ?? 0}（${fmtToken(s.ccEquiv)}）`;
+      tC.textContent = `${s.project} (${s.start}–${s.end})\n${t('tipCcTokens')}: ${s.ccEquiv ?? 0} (${fmtToken(s.ccEquiv)})`;
       cC.appendChild(tC);
       svg.appendChild(cC);
     }
 
-    const legG = svgEl('g', { transform: `translate(${svgW - 240}, 15)` });
+    const legG = svgEl('g', { transform: `translate(${svgW - 270}, 15)` });
 
     const l1 = svgEl('line', { x1: '0', y1: '0', x2: '18', y2: '0', stroke: 'var(--accent)', 'stroke-width': '2.5' });
     const dot1 = svgEl('circle', { cx: '9', cy: '0', r: '3.5', fill: 'var(--accent)' });
     const txt1 = svgEl('text', { x: '24', y: '4', 'font-size': '11', fill: 'var(--fg)' });
-    txt1.textContent = '执行者 token';
+    txt1.textContent = t('tipExecTokens');
     legG.appendChild(l1); legG.appendChild(dot1); legG.appendChild(txt1);
 
-    const l2 = svgEl('line', { x1: '115', y1: '0', x2: '133', y2: '0', stroke: 'var(--warn)', 'stroke-width': '2.5' });
-    const dot2 = svgEl('circle', { cx: '124', cy: '0', r: '3.5', fill: 'var(--warn)' });
-    const txt2 = svgEl('text', { x: '139', y: '4', 'font-size': '11', fill: 'var(--fg)' });
-    txt2.textContent = 'CC 等效 token';
+    const l2 = svgEl('line', { x1: '130', y1: '0', x2: '148', y2: '0', stroke: 'var(--warn)', 'stroke-width': '2.5' });
+    const dot2 = svgEl('circle', { cx: '139', cy: '0', r: '3.5', fill: 'var(--warn)' });
+    const txt2 = svgEl('text', { x: '154', y: '4', 'font-size': '11', fill: 'var(--fg)' });
+    txt2.textContent = t('tipCcTokens');
     legG.appendChild(l2); legG.appendChild(dot2); legG.appendChild(txt2);
 
     svg.appendChild(legG);
@@ -510,7 +511,7 @@ function renderTrend(data) {
   sec.appendChild(sessionsBox);
 
   const h3 = document.createElement('h3');
-  h3.textContent = '单次派活 token 散点图';
+  h3.textContent = t('scatter');
   sec.appendChild(h3);
 
   const runsBox = document.createElement('div');
@@ -520,7 +521,7 @@ function renderTrend(data) {
   if (validRuns.length === 0) {
     const p = document.createElement('p');
     p.className = 'sub';
-    p.textContent = '还没有数据';
+    p.textContent = t('noData');
     runsBox.appendChild(p);
   } else {
     const PALETTE = ['#2f6fec', '#b7791f', '#1a8f5a', '#9333ea', '#db2777', '#0891b2', '#ea580c'];
@@ -596,7 +597,7 @@ function renderTrend(data) {
       });
 
       const title = svgEl('title');
-      title.textContent = `${r.time} ${r.project} ${r.task} ${r.executor} ${r.tokens} ${r.review || ''}`.trim();
+      title.textContent = `${r.time} ${r.project} ${r.task} ${r.executor} ${r.tokens} ${tReview(r.review || '')}`.trim();
       circle.appendChild(title);
       svg.appendChild(circle);
 
@@ -633,7 +634,7 @@ async function load() {
   errDiv.textContent = '';
   try {
     const res = await fetch('/api/ledger', {
-      headers: { 'X-Collab': '1' }
+      headers: { 'X-Collab': '1', ...LANG_HEADER }
     });
     if (!res.ok) {
       errDiv.textContent = ERR_PREFIX + 'HTTP ' + res.status;
@@ -641,11 +642,11 @@ async function load() {
     }
     const data = await res.json();
 
-    let metaText = `数据：${data.source || '—'} · ${data.rowCount ?? 0} 行`;
+    let metaText = t('meta', data.source || '—', data.rowCount ?? 0);
     if (data.skipped && data.skipped > 0) {
-      metaText += ` · 跳过 ${data.skipped} 行`;
+      metaText += t('skipped', data.skipped);
     }
-    metaText += ` · 生成于 ${data.generated || '—'}`;
+    metaText += t('generated', data.generated || '—');
     $('meta-info').textContent = metaText;
 
     renderByExec(data);
@@ -656,7 +657,8 @@ async function load() {
   }
 }
 
-window.addEventListener('DOMContentLoaded', load);
+document.title = t('ledgerTitle');
+window.addEventListener('DOMContentLoaded', () => { applyI18n(); load(); });
 </script>
 </body>
 </html>

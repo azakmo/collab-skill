@@ -68,7 +68,7 @@ $COLLAB_HOME\
     cc-usage.ps1       统计 CC 自己的 token 花销
     tools.ps1          公共函数（定位 codex.exe、白名单、记账、工具链）
   executor\            注入给执行者的 AGENTS.zh-CN.md（英文 AGENTS.md）和按需技能
-  console\             协同控制台（console.ps1 + console.html + 账本页面）
+  console\             协同控制台（console.ps1 + console.html + 账本页面 + i18n.js 双语文案）
   roster.example.json  名册示例（roster.json 本地生成，不入库）
   ledger.csv           记账本（本地生成，不入库）
 
@@ -120,7 +120,7 @@ $COLLAB_HOME\
 - `& "$env:COLLAB_HOME\bin\cc-usage.ps1" -Since '<开始时间>' [-Record -Project <目录> -Task 'CC(全程)']`：从 Claude Code 的会话记录（`~/.claude/projects/*.jsonl`）里统计调用次数、平均上下文、各类 token，以及按价格折算的等效值（equiv），并记进记账本（executor=cc）。
 
 ### 协同控制台和名册（roster.json）
-- 打开控制台：`pwsh -File "$env:COLLAB_HOME\console\console.ps1"`，会自动打开 http://localhost:8790/ ，只监听本机，按 Ctrl+C 退出。`/ledger` 是账本统计页面。
+- 打开控制台：`pwsh -File "$env:COLLAB_HOME\console\console.ps1"`，会自动打开 http://localhost:8790/ ，只监听本机，按 Ctrl+C 退出。`/ledger` 是账本统计页面。界面中英双语：默认跟随语言设置，右上角的 English / 中文 按钮可以切换（浏览器会记住）。
 - 第二层（实现/初审）和第三层（苦力）放哪些执行者、勾选哪些模型，都在控制台里选，保存到 `roster.json`（旧版本自动备份为 `roster.json.bak`）。
 - 「探测模型」：Codex 自带的模型从 `models_cache.json` 读；OpenAI 兼容接口从 `/models` 读。
 - 新增模型来源：填地址和**环境变量名**（密钥先设进用户环境变量，控制台不收、也不显示密钥）。

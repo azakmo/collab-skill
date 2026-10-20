@@ -25,7 +25,7 @@ Let Claude Code (CC) do only the thinking — planning, writing specs, reviewing
    Copy-Item -Recurse C:\collab\skill\en\collab "$env:USERPROFILE\.claude\skills\"
    ```
 3. Install and sign in to the Codex CLI (`codex` on PATH, or the Codex desktop app installed).
-4. Configure the roster: on first run `roster.example.json` is copied to `roster.json`. Open the console (Chinese UI), click "探测模型" (probe models) and tick the models you actually have (the model names in the example are placeholders):
+4. Configure the roster: on first run `roster.example.json` is copied to `roster.json`. Open the console, click "Probe models" and tick the models you actually have (the model names in the example are placeholders):
    ```powershell
    pwsh -File "$env:COLLAB_HOME\console\console.ps1"
    ```
@@ -67,7 +67,7 @@ $COLLAB_HOME\
     cc-usage.ps1       measure CC's own token spend
     tools.ps1          shared helpers (codex.exe lookup, whitelist, ledger, toolchains)
   executor\            AGENTS.md (+ AGENTS.zh-CN.md) and on-demand skills injected into executors
-  console\             web console (console.ps1 + console.html + ledger page)
+  console\             web console (console.ps1 + console.html + ledger page + i18n.js)
   roster.example.json  roster example (roster.json is local, git-ignored)
   ledger.csv           ledger (local, git-ignored)
 
@@ -119,7 +119,7 @@ $COLLAB_HOME\
 - `& "$env:COLLAB_HOME\bin\cc-usage.ps1" -Since '<start time>' [-Record -Project <dir> -Task 'CC(total)']`: reads Claude Code transcripts (`~/.claude/projects/*.jsonl`) and reports calls, average context, token types and a price-weighted equivalent (equiv); `-Record` adds it to the ledger as `executor=cc`.
 
 ### Console and roster (roster.json)
-- Start: `pwsh -File "$env:COLLAB_HOME\console\console.ps1"` → opens http://localhost:8790/ (localhost only, Ctrl+C to quit). `/ledger` shows ledger statistics.
+- Start: `pwsh -File "$env:COLLAB_HOME\console\console.ps1"` → opens http://localhost:8790/ (localhost only, Ctrl+C to quit). `/ledger` shows ledger statistics. The UI is bilingual: it starts in the configured language, and the English / 中文 button in the top-right switches it (remembered per browser).
 - Choose which executors sit in layer 2 (implement/review) and layer 3 (labor) and which models are enabled; saved to `roster.json` (previous version backed up as `roster.json.bak`).
 - Probe models: Codex built-in models come from `models_cache.json`; OpenAI-compatible endpoints from `/models`.
 - New provider: enter the URL and the **name of an environment variable** holding the key (the console never accepts or shows keys).
