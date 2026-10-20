@@ -124,7 +124,7 @@ $COLLAB_HOME\
     cc-usage.ps1       measure CC's own token spend
     tools.ps1          shared helpers (codex.exe lookup, whitelist, ledger, toolchains)
   executor\            AGENTS.md (+ AGENTS.zh-CN.md) and on-demand skills injected into executors
-  console\             web console (console.ps1 + console.html + ledger page + i18n.js)
+  console\             web console (console.ps1 + console.html + live-stats.ps1 + ledger page + i18n.js; open-console.ps1 = desktop shortcut)
   roster.example.json  roster example (roster.json is local, git-ignored)
   ledger.csv           ledger (local, git-ignored)
 
@@ -182,6 +182,7 @@ $COLLAB_HOME\
 
 ### Console and roster (roster.json)
 - Start: `pwsh -File "$env:COLLAB_HOME\console\console.ps1"` → opens http://localhost:8790/ (localhost only, Ctrl+C to quit). `/ledger` shows ledger statistics. The UI is bilingual: it starts in the configured language, and the English / 中文 button in the top-right switches it (remembered per browser).
+- **Live panel** at the top of the console (refreshes every 3 s, read-only): every running executor (task, executor/model, resumed or read-only, run time, time since last output — red when it is past the stall limit — the executor's latest narration and the last 40 log lines), plus a task board per project active in the last 24 hours (running / verifying-rework / passed / needs CC / not started). It reads process command lines and `collab\logs` / `collab\tasks` only. For a desktop shortcut point it at `pwsh -File "$env:COLLAB_HOME\console\open-console.ps1"`: it opens the page if the console is already running, otherwise starts it in that window.
 - Choose which executors sit in layer 2 (implement/review) and layer 3 (labor) and which models are enabled; saved to `roster.json` (previous version backed up as `roster.json.bak`).
 - Probe models: Codex built-in models come from `models_cache.json`; OpenAI-compatible endpoints from `/models`.
 - New provider: enter the URL and the **name of an environment variable** holding the key (the console never accepts or shows keys).

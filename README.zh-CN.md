@@ -125,7 +125,7 @@ $COLLAB_HOME\
     cc-usage.ps1       统计 CC 自己的 token 花销
     tools.ps1          公共函数（定位 codex.exe、白名单、记账、工具链）
   executor\            注入给执行者的 AGENTS.zh-CN.md（英文 AGENTS.md）和按需技能
-  console\             协同控制台（console.ps1 + console.html + 账本页面 + i18n.js 双语文案）
+  console\             协同控制台（console.ps1 + console.html + live-stats.ps1 实时进度 + 账本页面 + i18n.js 双语文案；open-console.ps1 = 桌面快捷方式）
   roster.example.json  名册示例（roster.json 本地生成，不入库）
   ledger.csv           记账本（本地生成，不入库）
 
@@ -183,6 +183,7 @@ $COLLAB_HOME\
 
 ### 协同控制台和名册（roster.json）
 - 打开控制台：`pwsh -File "$env:COLLAB_HOME\console\console.ps1"`，会自动打开 http://localhost:8790/ ，只监听本机，按 Ctrl+C 退出。`/ledger` 是账本统计页面。界面中英双语：默认跟随语言设置，右上角的 English / 中文 按钮可以切换（浏览器会记住）。
+- **实时进度**（控制台顶部，每 3 秒刷新，只读）：列出每个正在跑的执行者（任务、执行者/模型、是否续跑或只读、已运行多久、最后一次输出距今多久——超过卡死阈值会标红、执行者最新的自述，以及日志最后 40 行），下面是最近 24 小时活跃项目的任务看板（运行中 / 验收返工中 / 通过 / 要 CC 处理 / 未开始）。只读进程命令行和 `collab\logs`、`collab\tasks`。桌面快捷方式指向 `pwsh -File "$env:COLLAB_HOME\console\open-console.ps1"`：控制台已在运行就直接打开网页，否则在这个窗口里启动它。
 - 第二层（实现/初审）和第三层（苦力）放哪些执行者、勾选哪些模型，都在控制台里选，保存到 `roster.json`（旧版本自动备份为 `roster.json.bak`）。
 - 「探测模型」：Codex 自带的模型从 `models_cache.json` 读；OpenAI 兼容接口从 `/models` 读。
 - 新增模型来源：填地址和**环境变量名**（密钥先设进用户环境变量，控制台不收、也不显示密钥）。

@@ -2,6 +2,16 @@
 // COLLAB_LANG, injected as __DEFAULT_LANG__); the toggle button stores the viewer's choice in localStorage.
 const I18N = {
   en: {
+    // live progress
+    liveTitle: 'Live', liveDisconnected: 'Lost connection to the console (was the console window closed?)',
+    liveRunning: '{0} executor(s) running', liveIdle: 'No executor running', liveRefresh: 'refreshes every 3 s',
+    durSec: '{0} s', durMin: '{0} min {1} s', durHour: '{0} h {1} min',
+    liveResume: ' · resumed', liveReadonly: ' · read-only',
+    liveElapsed: 'running for {0}', liveLastOut: 'last output {0} ago', liveStalled: ' (no output for over {0} min, may be stuck)',
+    liveLogKb: 'log {0} KB', liveTail: 'Last 40 log lines', liveNoTasks: 'no task files',
+    liveNoBoards: 'No collab project active in the last 24 hours',
+    st_running: 'running', st_between: 'verifying / rework', st_PASS: 'passed', st_NEEDS_CC: 'needs CC',
+    st_NO_TEST: 'no test, CC reviews', st_ran: 'ran', st_todo: 'not started',
     // console
     consoleTitle: 'Collab Console',
     ledgerLink: 'Ledger →',
@@ -66,6 +76,15 @@ const I18N = {
     review: { '通过': 'pass', '返工': 'rework', '失败': 'failed', '取消': 'cancelled', '中断': 'interrupted' },
   },
   'zh-CN': {
+    liveTitle: '实时进度', liveDisconnected: '控制台连接断开（关掉了控制台窗口？）',
+    liveRunning: '{0} 个执行者在跑', liveIdle: '现在没有执行者在跑', liveRefresh: '每 3 秒刷新',
+    durSec: '{0} 秒', durMin: '{0} 分 {1} 秒', durHour: '{0} 小时 {1} 分',
+    liveResume: ' · 续跑', liveReadonly: ' · 只读',
+    liveElapsed: '已运行 {0}', liveLastOut: '最后输出 {0} 前', liveStalled: '（超过 {0} 分钟没输出，可能卡住）',
+    liveLogKb: '日志 {0} KB', liveTail: '日志最后 40 行', liveNoTasks: '没有任务文件',
+    liveNoBoards: '最近 24 小时没有活跃的协同项目',
+    st_running: '运行中', st_between: '验收/返工中', st_PASS: '通过', st_NEEDS_CC: '要 CC 处理',
+    st_NO_TEST: '无测试，待 CC 审', st_ran: '跑过', st_todo: '未开始',
     consoleTitle: '协同控制台',
     ledgerLink: '账本 →',
     consoleSub: '在这里选第二层、第三层用哪些执行者和模型。保存后写入 <code>roster.json</code>；派活脚本只能调用这里勾选过的模型。',

@@ -1,10 +1,12 @@
-# Collab console: local web page for editing <collab>\roster.json (executors, model whitelist, layers); /ledger is the ledger page.
+# Collab console: local web page for editing <collab>\roster.json (executors, model whitelist, layers); the "Live"
+# panel at the top reads /api/live; /ledger is the ledger page. Desktop shortcut: console\open-console.ps1.
 #   pwsh -File "$env:COLLAB_HOME\console\console.ps1"            # opens http://localhost:8790/
 # Listens on localhost only; keys are read by env var name and never returned to the page. Ctrl+C to quit.
 # UI language: the page's toggle (sent as X-Lang), default from roster "language" / COLLAB_LANG.
 param([int]$Port = 8790, [switch]$NoBrowser)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '..\bin\tools.ps1')
+. (Join-Path $PSScriptRoot 'live-stats.ps1')
 . (Join-Path $PSScriptRoot 'ledger-stats.ps1')
 
 $html = Join-Path $PSScriptRoot 'console.html'
@@ -84,7 +86,8 @@ try {
             if ($req.HttpMethod -eq 'GET' -and $path -eq '/i18n.js') {
                 $js = (Get-Content (Join-Path $PSScriptRoot 'i18n.js') -Raw -Encoding utf8).Replace('__DEFAULT_LANG__', $defaultLang)
                 Send $ctx 200 'application/javascript' $js; continue
-            }            if ($req.HttpMethod -eq 'GET' -and $path -eq '/') { Send $ctx 200 'text/html' (Get-Content $html -Raw -Encoding utf8); continue }
+            }
+            if ($req.HttpMethod -eq 'GET' -and $path -eq '/') { Send $ctx 200 'text/html' (Get-Content $html -Raw -Encoding utf8); continue }
             if ($req.HttpMethod -eq 'GET' -and $path -eq '/ledger') {
                 $ledgerHtml = Join-Path $PSScriptRoot 'ledger.html'
                 if (Test-Path $ledgerHtml) {
@@ -100,6 +103,9 @@ try {
 
             if ($req.HttpMethod -eq 'GET' -and $path -eq '/api/ledger') {
                 Send $ctx 200 'application/json' (Get-LedgerStatsJson $script:LedgerPath)
+            }
+            elseif ($req.HttpMethod -eq 'GET' -and $path -eq '/api/live') {
+                Send $ctx 200 'application/json' (Get-LiveJson)
             }
             elseif ($req.HttpMethod -eq 'GET' -and $path -eq '/api/roster') {
                 $r = Get-Roster
