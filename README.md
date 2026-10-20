@@ -17,6 +17,10 @@ Let Claude Code (CC) do only the thinking — planning, writing specs, reviewing
 
 *The ledger page of the built-in console (sample data).*
 
+![Console: choose executors and models for each layer, model whitelist](docs/images/console-en.png)
+
+*The roster console: pick executors and whitelist models per layer (sample config).*
+
 ## Install
 
 1. Clone anywhere, e.g. `C:\collab`, and point the user environment variable `COLLAB_HOME` at it:
