@@ -113,6 +113,7 @@ $COLLAB_HOME\
   bin\
     init-collab.ps1    create collab\ inside a project
     run-executor.ps1   generic dispatcher (roster.json whitelist)
+    visual-review.ps1  visual acceptance: a vision reviewer checks screenshots against a checklist, writes contact.png
     run-codex.ps1      = run-executor -Executor codex
     run-gemini.ps1     = run-executor -Executor gemini
     run-pipeline.ps1   one task: dispatch → verify → rework → escalate
@@ -166,6 +167,11 @@ $COLLAB_HOME\
 - Per task (`run-pipeline.ps1`): dispatch → run the acceptance test → on failure append the failing lines to the task file and send it back to the same executor (up to MaxRework rounds) → still failing: hand it to the next executor in `Escalation` → result in `collab/logs/<task>.pipeline.json`.
 - Settings are read from the task file fields: `Executor`, `Timeout`, `Network`, `Toolchain`, `Escalation` (or the Chinese `执行者`, `时限`, `联网`, `工具链`, `升级路径`).
 - Results: `PASS`; `NO_TEST` (no acceptance test, CC reviews manually); `NEEDS_CC` (the whole escalation path failed).
+- **Interruptions are not rework**: when an executor crashes (exit code other than 0/2/3), stalls (exit 4: the err.log has not grown for 12 minutes, usually a request hanging in the proxy; tune with `COLLAB_STALL_MIN`) or the proxy is unreachable, the pipeline waits for the provider (probing every 30 s, up to `-ProviderWaitMin 15`), then continues the *same* session with `codex exec resume <session id>` — progress is kept and no rework round is used (up to `-MaxResume 2`). The ledger row is marked `中断` (interrupted) and the flags column gets `resume`. Exit 2 (done but no report) gets one resume that only asks for the report. Timeouts (3) are still rework.
+  - Manual resume: `run-executor.ps1 ... -Resume <session id> [-ResumePrompt '...']`; the id is on the `session id:` line at the top of that run's err.log.
+- **Health probe checks the answer**: before a dispatch (when `-Model` is not pinned) the default model gets a tiny question (17+25). If it does not answer correctly within 20 s, the run uses the first roster `fallback_models` entry (must also be in `enabled_models`) that does, with a WARNING. Checking the *answer* matters: an upstream with no capacity keeps `/models` working while generation queues for minutes, and a retired model may return HTTP 200 instantly with a canned "no longer available" text that makes Codex loop forever.
+- **Context window for proxy models**: Codex has no metadata for proxy models (the `Model metadata ... not found` warning) and assumes a small context window, so long runs get compacted (lossy). Roster executor field `context_window` is passed as `-c model_context_window=N` (`run-executor -ContextWindow N` overrides). The warning itself can't be silenced without a `model_catalog_json`, which requires a full base system prompt — so Codex's fallback prompt is kept.
+- **Visual acceptance**: if the task has a `## Visual acceptance` (or `## 视觉验收`) section, the pipeline runs `visual-review.ps1` after the tests pass. It builds `collab/logs/<task>.contact.png` (one contact sheet for CC's final review) and asks the vision model, read-only via `codex exec -i` (references first), to check every screenshot against the checklist; the verdict goes to `collab/logs/<task>.visual.md`. A FAIL appends the issue list to the task as a rework round. A reviewer error (proxy down, bad output) does not block the task: pipeline.json records `reviewer error` and CC checks the contact sheet. Exit codes: 0 pass, 1 fail, 4 no section, 5 no screenshots, other = reviewer error.
 - Executors run with a lean config (`--ignore-user-config`, no Codex plugins / MCP servers / hooks), measured at 20–30% fewer baseline tokens. Set `clean_config: false` in the roster to opt out; `reasoning` sets reasoning effort.
 - **Dedicated executor environment** (on by default, `collab_env: false` to opt out): `-c skills.include_instructions=false` hides your personal Codex skill list, and `-c developer_instructions` injects `executor\AGENTS.md` (with `{{COLLAB_HOME}}` replaced by the real path): sandbox limits, PowerShell pitfalls, working style, and on-demand skills under `executor\skills\*\SKILL.md`. Login and sandbox setup stay in your normal `CODEX_HOME`.
   - `executor\AGENTS.md` must not contain `'''` (it is passed as a TOML literal string).
@@ -209,7 +215,7 @@ Creates a research task `collab\tasks\R<timestamp>.md`, sends it to an executor 
 - Risk: bulk calls through a third-party proxy may get your account restricted — assess this yourself.
 - Proxies occasionally garble the conversation format, so don't skip the Codex review and CC's final review.
 
-Exit codes: 0 = executor finished and wrote a report; 2 = finished without a report; 3 = timed out and killed; other = the executor's own error.
+Exit codes: 0 = executor finished and wrote a report; 2 = finished without a report; 3 = timed out and killed; 4 = stalled (no log output for 12 min); other = the executor's own error or an interrupted process. The pipeline resumes 4 and "other" (see above).
 
 ## License
 

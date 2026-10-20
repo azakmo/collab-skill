@@ -31,7 +31,8 @@ $script:Toolchains = @{
 }
 
 # Sandbox/network/toolchain options shared by every codex-exec based runner.
-function Get-SandboxArgs([switch]$Network, [string[]]$AddDir, [string]$Toolchain) {
+# -ForResume: `codex exec resume` has no --add-dir/-s, so extra dirs go in as writable_roots instead.
+function Get-SandboxArgs([switch]$Network, [string[]]$AddDir, [string]$Toolchain, [switch]$ForResume) {
     $a = @()
     if ($Network) { $a += @('-c', 'sandbox_workspace_write.network_access=true') }
     $dirs = @($AddDir | Where-Object { $_ })
@@ -42,8 +43,69 @@ function Get-SandboxArgs([switch]$Network, [string[]]$AddDir, [string]$Toolchain
         $env:PATH = (($tc.Path -join ';') + ';' + $env:PATH)
         $dirs += $tc.AddDirs
     }
-    foreach ($d in ($dirs | Select-Object -Unique)) { $a += @('--add-dir', $d) }
+    $dirs = @($dirs | Select-Object -Unique)
+    if ($ForResume) {
+        $a += @('-c', 'sandbox_mode="workspace-write"')
+        if ($dirs) { $a += @('-c', ('sandbox_workspace_write.writable_roots=[{0}]' -f (($dirs | ForEach-Object { "'$_'" }) -join ','))) }
+    } else {
+        foreach ($d in $dirs) { $a += @('--add-dir', $d) }
+    }
     $a
+}
+
+# Proxy models have no Codex metadata ("Model metadata ... not found. Defaulting to fallback metadata"), so Codex
+# assumes a small context window and long runs get compacted (lossy). roster executor "context_window" sets it
+# explicitly. (A model_catalog_json would also silence the warning, but it needs a full base system prompt and the
+# only ones available are GPT-specific, so Codex's fallback prompt is kept.)
+function Get-ContextArgs([object]$Ex, [int]$ContextWindow) {
+    if (-not $ContextWindow) { $ContextWindow = [int]$Ex.context_window }
+    if (-not $ContextWindow) { return @() }
+    @('-c', "model_context_window=$ContextWindow")
+}
+
+# Seconds for a correct answer to a tiny question from <Model>, or -1 on error / wrong answer / slower than $TimeoutSec.
+# Probe generation itself: /models can answer while generation queues for minutes (upstream "no capacity"), and a
+# retired model can return 200 instantly with a canned "no longer available" text that makes Codex loop forever.
+function Measure-ModelLatency([object]$Pv, [string]$Model, [int]$TimeoutSec = 20) {
+    try {
+        $null = Get-ProviderArgs $Pv   # sets the key env var; throws when the endpoint does not answer
+        $key = [Environment]::GetEnvironmentVariable($Pv.env_key, 'Process')
+        $body = @{ model = $Model; max_tokens = 64; messages = @(@{ role = 'user'; content = 'What is 17+25? Reply with the number only.' }) } | ConvertTo-Json -Depth 4
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        $r = Invoke-RestMethod "$($Pv.base_url)/chat/completions" -Method Post -ContentType 'application/json' `
+            -Headers @{ Authorization = "Bearer $key" } -Body $body -TimeoutSec $TimeoutSec
+        if ("$($r.choices[0].message.content)" -notmatch '\b42\b') { return -1 }
+        [Math]::Round($sw.Elapsed.TotalSeconds, 1)
+    } catch { -1 }
+}
+
+# Model to use for this run: the requested/default one, or the first roster "fallback_models" entry (must also be
+# in enabled_models) that answers when the default is congested. Built-in Codex: no probe.
+function Select-HealthyModel([object]$Sel, [int]$TimeoutSec = 20) {
+    if ($Sel.Provider.kind -eq 'codex-builtin') { return $Sel.Model }
+    $fallbacks = @($Sel.Executor.fallback_models | Where-Object { $_ -and $_ -ne $Sel.Model -and $_ -in @($Sel.Executor.enabled_models) })
+    if (-not $fallbacks) { return $Sel.Model }
+    if ((Measure-ModelLatency $Sel.Provider $Sel.Model $TimeoutSec) -ge 0) { return $Sel.Model }
+    foreach ($m in $fallbacks) {
+        $t = Measure-ModelLatency $Sel.Provider $m $TimeoutSec
+        if ($t -ge 0) {
+            Write-Host "  WARNING: $($Sel.Model) did not answer within ${TimeoutSec}s (upstream congestion), this run uses fallback $m (${t}s)"
+            return $m
+        }
+    }
+    $Sel.Model   # nothing better answers: keep the default; the stall watchdog / resume handle the rest
+}
+
+# Is the executor's provider answering with any of its usable models? (built-in Codex: assume yes)
+function Test-ProviderHealthy([string]$ExecutorId) {
+    try {
+        $sel = Resolve-Executor $ExecutorId
+        if ($sel.Provider.kind -eq 'codex-builtin') { return $true }
+        foreach ($m in @($sel.Model) + @($sel.Executor.fallback_models | Where-Object { $_ -in @($sel.Executor.enabled_models) })) {
+            if ((Measure-ModelLatency $sel.Provider $m 60) -ge 0) { return $true }
+        }
+        $false
+    } catch { $false }
 }
 
 $script:RosterPath = Join-Path $PSScriptRoot '..\roster.json'
@@ -205,11 +267,24 @@ function Invoke-ExecutorCore {
         -RedirectStandardInput $stdin -RedirectStandardOutput $out -RedirectStandardError $err `
         -NoNewWindow -PassThru
     $null = $p.Handle  # keep the handle so ExitCode is available later
-    if (-not $p.WaitForExit($TimeoutMin * 60 * 1000)) {
+    # Wait in slices: a run whose log has not grown for $stallMin (hung proxy request) is killed as STALLED (4),
+    # which the pipeline treats as an interruption and resumes. Long silent builds: raise COLLAB_STALL_MIN.
+    $stallMin = if ($env:COLLAB_STALL_MIN) { [int]$env:COLLAB_STALL_MIN } else { 12 }
+    $deadline = (Get-Date).AddMinutes($TimeoutMin)
+    $lastSize = -1; $lastGrow = Get-Date
+    while (-not $p.WaitForExit(30000)) {
+        $size = if (Test-Path $err) { (Get-Item $err).Length } else { 0 }
+        if ($size -ne $lastSize) { $lastSize = $size; $lastGrow = Get-Date }
+        $why = if ((Get-Date) -gt $deadline) { 'timeout' } elseif (((Get-Date) - $lastGrow).TotalMinutes -ge $stallMin) { 'stall' } else { '' }
+        if (-not $why) { continue }
         & taskkill.exe /PID $p.Id /T /F | Out-Null
-        Write-Host "[$(Get-Date -Format s)] $Name TIMEOUT after ${TimeoutMin}m, process tree killed"
         Remove-Item $stdin -ErrorAction SilentlyContinue
-        return 3
+        if ($why -eq 'timeout') {
+            Write-Host "[$(Get-Date -Format s)] $Name TIMEOUT after ${TimeoutMin}m, process tree killed"
+            return 3
+        }
+        Write-Host "[$(Get-Date -Format s)] $Name STALLED: no log output for ${stallMin}m, process tree killed"
+        return 4
     }
     Remove-Item $stdin -ErrorAction SilentlyContinue
     $code = $p.ExitCode

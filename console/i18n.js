@@ -63,7 +63,7 @@ const I18N = {
     scatter: 'Tokens per dispatch',
     meta: 'Data: {0} · {1} rows', skipped: ' · {0} rows skipped', generated: ' · generated {0}',
     minutes: '{0} min',
-    review: { '通过': 'pass', '返工': 'rework', '失败': 'failed', '取消': 'cancelled' },
+    review: { '通过': 'pass', '返工': 'rework', '失败': 'failed', '取消': 'cancelled', '中断': 'interrupted' },
   },
   'zh-CN': {
     consoleTitle: '协同控制台',

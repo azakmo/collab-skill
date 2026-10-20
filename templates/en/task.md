@@ -38,6 +38,14 @@
 ## Acceptance criteria
 - [ ] {{checkable conditions, ideally verifiable by a command}}
 
+## Visual acceptance (required when the task produces UI, images or video frames; otherwise delete this section)
+After the acceptance test passes, the pipeline hands the screenshots below to a vision reviewer that checks each one against this list and sends the task back for rework on any problem. The executor must generate the screenshots itself (Android: Roborazzi/Robolectric; web: headless Edge; video: extract frames) and the acceptance test must check their count.
+- Screenshot dir: {{e.g. docs/screenshots/T00n}}
+- Reference images: {{e.g. docs/mockups/xxx.png; or "none"}}
+- Per-image checklist:
+  - {{file.png}}: {{what must be visible: concrete numbers, proportions, text, colors, layout; state facts that can be checked against the sample data, e.g. "the ring chart is about 80% full"}}
+- General: no empty or truncated text, no leftover `$` / `{}` / stray symbols; nothing overflows the screen or card; text readable in light and dark mode; layout matches the reference
+
 ## Acceptance test
 The controller runs the script below with `verify.ps1` in the project root: exit code 0 when everything passes, non-zero if any check fails. The executor must run it and pass before handing in, and **must not modify this script**. If you believe the test itself is wrong, say so in the report — do not change the test.
 

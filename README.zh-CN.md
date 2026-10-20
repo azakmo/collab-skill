@@ -114,6 +114,7 @@ $COLLAB_HOME\
   bin\
     init-collab.ps1    在某个项目里建 collab\ 目录
     run-executor.ps1   通用派活入口（按 roster.json 白名单）
+    visual-review.ps1  视觉验收：审查员逐张看截图对照清单，输出拼图 contact.png
     run-codex.ps1      = run-executor -Executor codex
     run-gemini.ps1     = run-executor -Executor gemini
     run-pipeline.ps1   单任务：派活 → 验收 → 返工 → 升级
@@ -167,6 +168,11 @@ $COLLAB_HOME\
 - 每个任务的流程（`run-pipeline.ps1`）：派活 → 跑验收测试 → 不过就把失败项追加到任务文件里，交回给同一个执行者返工（最多 MaxRework 轮）→ 还不过就按「升级路径」换下一个执行者 → 结果写进 `collab/logs/<任务>.pipeline.json`。
 - 设置都从任务文件里读：「执行者」「时限」「联网」「工具链」「升级路径」。
 - 结果码：`PASS`；`NO_TEST`（没写验收测试，CC 自己审）；`NEEDS_CC`（整条升级路径都没过）。
+- **中断不算返工**：执行者崩溃（退出码不是 0/2/3）、卡死（退出码 4：err.log 连续 12 分钟没有新输出，多半是请求挂在反代里；环境变量 `COLLAB_STALL_MIN` 可调）或反代连不上时，流水线先等反代恢复（每 30 秒探测一次，最多 `-ProviderWaitMin 15` 分钟），再用 `codex exec resume <会话 id>` 接着**同一个**会话做：保留已有进度，不占返工轮数，最多续 `-MaxResume 2` 次。记账本里这一行标「中断」，开关一栏带 `resume`。退出码 2（做完了但没写回报）只续跑一次、只要求补写回报。超时（3）仍按返工处理。
+  - 单独续跑：`run-executor.ps1 ... -Resume <会话 id> [-ResumePrompt '...']`，会话 id 在该轮 err.log 开头的 `session id:` 一行。
+- **健康探测要核对答案**：派活前（调用方没指定 `-Model` 时）先给默认模型发一道小题（17+25），20 秒内答不对，本轮就改用名册 `fallback_models` 里第一个能答对的（必须同时在 `enabled_models` 里），并打出 WARNING。之所以要核对答案：上游没容量时 `/models` 照常能答，生成却要排队好几分钟；已停用的模型可能秒回 HTTP 200，内容是一句"no longer available"，Codex 拿到会原地空转。
+- **反代模型的上下文窗口**：Codex 没有反代模型的元数据（日志里的 `Model metadata ... not found` 警告），会按很小的默认窗口算，长任务会被压缩（压缩会丢细节）。名册执行者的 `context_window` 字段会作为 `-c model_context_window=N` 传入（`run-executor -ContextWindow N` 可临时覆盖）。这个警告本身消不掉：用 `model_catalog_json` 必须提供完整的系统提示词，所以保留 Codex 的默认提示词。
+- **视觉验收**：任务里有 `## 视觉验收`（或 `## Visual acceptance`）一节时，测试全过后流水线会调用 `visual-review.ps1`。它把截图拼成一张 `collab/logs/<任务>.contact.png`（给 CC 终审时只看这一张），再让视觉模型以只读方式（`codex exec -i`，参考图在前）逐张对照清单检查，结论写进 `collab/logs/<任务>.visual.md`。FAIL 的问题清单作为一轮返工追加进任务文件。审查员本身出错（反代断了、输出格式不对）不阻塞任务，pipeline.json 里记 `reviewer error`，由 CC 看拼图。退出码：0 通过，1 不通过，4 没有这一节，5 没有截图，其他 = 审查员出错。
 - 执行者默认用精简配置运行（`--ignore-user-config`，不加载 Codex 里的插件、MCP 服务和钩子），实测基础 token 少 20–30%。名册里 `clean_config: false` 可以关掉；`reasoning` 设推理强度。
 - **执行者专用环境**（默认开，名册里 `collab_env: false` 可关）：`-c skills.include_instructions=false` 关掉用户个人 Codex 技能列表，再用 `-c developer_instructions` 注入 `executor\AGENTS.md`（其中的 `{{COLLAB_HOME}}` 会替换成实际目录）：沙箱限制、PowerShell 常见坑、工作方式，以及按需读取的技能 `executor\skills\*\SKILL.md`。登录和沙箱配置仍在原来的 `CODEX_HOME`。
   - `executor\AGENTS.md` 不能含 `'''`（它作为 TOML 字面量字符串传入）。
@@ -210,7 +216,7 @@ $COLLAB_HOME\
 - 风险：用第三方反代批量调用可能有账号被限制的风险，请自行评估。
 - 反代转换对话格式时偶尔会失真，所以 Codex 初审和 CC 终审不能省。
 
-脚本退出码：0 = 执行者正常结束且写了回报；2 = 结束了但没写回报；3 = 超时被终止；其他 = 执行者自身报错。
+脚本退出码：0 = 执行者正常结束且写了回报；2 = 结束了但没写回报；3 = 超时被终止；4 = 卡死（连续 12 分钟没有日志输出）；其他 = 执行者自身报错或进程被中断。4 和「其他」流水线都会续跑（见上）。
 
 ## License
 

@@ -55,8 +55,10 @@
       "enabled_models": [
         "gemini-2.5-pro"
       ],
-      "notes": "clearly specified implementations, bulk edits, reading; verbose, uses several times Codex's tokens; the proxy occasionally garbles conversations",
-      "clean_config": true
+      "notes": "clearly specified implementations, bulk edits, reading; verbose, uses several times Codex's tokens; the proxy occasionally garbles conversations; fallback_models: used for a run when the default model does not answer the health probe within 20 s (must also be in enabled_models); context_window: model_context_window passed to Codex for proxy models (0 = Codex default)",
+      "clean_config": true,
+      "fallback_models": [],
+      "context_window": 0
     }
   ]
 }
