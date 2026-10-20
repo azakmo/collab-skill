@@ -1,0 +1,662 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>账本</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--fg:#1d2330;--muted:#6b7385;--line:#e2e5eb;--accent:#2f6fec;--ok:#1a8f5a;--warn:#b7791f;--bad:#c53030;--chip:#eef2fb}
+@media (prefers-color-scheme:dark){:root{--bg:#14171d;--card:#1c2028;--fg:#e6e9ef;--muted:#9aa3b5;--line:#2c323d;--accent:#6b9bff;--ok:#3fbf86;--warn:#e0a84a;--bad:#f07171;--chip:#252c3a}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,"Microsoft YaHei",sans-serif}
+main{max-width:1100px;margin:0 auto;padding:20px 16px 80px}
+h1{font-size:20px;margin:0}
+h2{font-size:16px;margin:0 0 12px}
+h3{font-size:14px;margin:20px 0 10px}
+.sub{color:var(--muted);margin:6px 0 16px;font-size:13px}
+.header-row{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:4px}
+a{color:var(--accent);text-decoration:none;font-size:14px}
+a:hover{text-decoration:underline}
+button{background:var(--chip);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:4px 12px;font:inherit;cursor:pointer}
+button:hover{filter:brightness(0.95)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:24px}
+.table-wrap{overflow-x:auto;width:100%}
+table{border-collapse:collapse;width:100%;font-size:13px;min-width:550px}
+td,th{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:middle}
+th{color:var(--muted);font-weight:600;white-space:nowrap}
+tr.total{font-weight:bold;background:var(--chip)}
+#error{color:var(--bad);font-size:13px;margin:8px 0;font-weight:600}
+.chart-box{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-top:14px}
+.chart-svg{width:100%;height:auto;display:block;overflow:visible}
+.project-bar-card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin-top:10px}
+.project-bar-title{font-weight:600;font-size:13px;margin-bottom:6px}
+.bar-svg{width:100%;max-width:650px;height:auto;display:block;overflow:visible}
+</style>
+</head>
+<body>
+<main>
+  <div class="header-row">
+    <h1>账本</h1>
+    <a href="/">← 名册</a>
+    <button id="refresh-btn" onclick="load()">刷新</button>
+  </div>
+  <p class="sub" id="meta-info"></p>
+  <div id="error"></div>
+
+  <section id="by-exec" class="card"></section>
+  <section id="projects" class="card"></section>
+  <section id="trend" class="card"></section>
+</main>
+
+<script>
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const ERR_PREFIX = String.fromCharCode(21152, 36733, 22833, 36133, 65306);
+
+function $(id) {
+  return document.getElementById(id);
+}
+
+function svgEl(tag, attrs = {}) {
+  const el = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    el.setAttribute(k, v);
+  }
+  return el;
+}
+
+function fmtToken(n) {
+  if (n === null || n === undefined) return '—';
+  if (n < 10000) return String(n);
+  return (n / 10000).toFixed(1) + '万';
+}
+
+function fmtRate(r) {
+  if (r === null || r === undefined) return '—';
+  return Math.round(r * 100) + '%';
+}
+
+function fmtMinutes(x) {
+  if (x === null || x === undefined) return '—';
+  return x + ' 分';
+}
+
+function fmtRatio(r) {
+  if (r === null || r === undefined) return '—';
+  return Number(r).toFixed(2);
+}
+
+function projShort(p) {
+  if (!p) return '';
+  const parts = p.split(/[\\/]/).filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : p;
+}
+
+function formatExecutorBreakdown(p) {
+  const total = fmtToken(p.executorTokens);
+  if (!p.byExecutor) return total;
+  const entries = Object.entries(p.byExecutor);
+  if (entries.length === 0) return total;
+  const parts = entries.map(([exec, tok]) => `${exec} ${fmtToken(tok)}`).join(' / ');
+  return `${total}（${parts}）`;
+}
+
+function renderByExec(data) {
+  const sec = $('by-exec');
+  sec.innerHTML = '';
+  
+  const h2 = document.createElement('h2');
+  h2.textContent = '按执行者 × 任务类型';
+  sec.appendChild(h2);
+
+  const byExecType = data.byExecType || [];
+  const byExecutor = data.byExecutor || [];
+
+  if (byExecType.length === 0 && byExecutor.length === 0) {
+    const p = document.createElement('p');
+    p.className = 'sub';
+    p.textContent = '还没有数据';
+    sec.appendChild(p);
+    return;
+  }
+
+  const execs = [];
+  for (const row of byExecType) {
+    if (row.executor && !execs.includes(row.executor)) execs.push(row.executor);
+  }
+  for (const row of byExecutor) {
+    if (row.executor && !execs.includes(row.executor)) execs.push(row.executor);
+  }
+
+  const wrap = document.createElement('div');
+  wrap.className = 'table-wrap';
+  const table = document.createElement('table');
+  table.innerHTML = `
+    <thead>
+      <tr>
+        <th>执行者</th>
+        <th>类型</th>
+        <th>次数</th>
+        <th>通过率</th>
+        <th>平均 token</th>
+        <th>平均用时</th>
+      </tr>
+    </thead>
+  `;
+  const tbody = document.createElement('tbody');
+
+  for (const exec of execs) {
+    const rows = byExecType.filter(r => r.executor === exec);
+    for (const r of rows) {
+      const tr = document.createElement('tr');
+      
+      const tdExec = document.createElement('td');
+      tdExec.textContent = r.executor;
+      tr.appendChild(tdExec);
+
+      const tdType = document.createElement('td');
+      tdType.textContent = r.type;
+      tr.appendChild(tdType);
+
+      const tdRuns = document.createElement('td');
+      tdRuns.textContent = String(r.runs ?? '—');
+      tr.appendChild(tdRuns);
+
+      const tdRate = document.createElement('td');
+      tdRate.textContent = fmtRate(r.passRate);
+      tr.appendChild(tdRate);
+
+      const tdTok = document.createElement('td');
+      tdTok.textContent = fmtToken(r.avgTokens);
+      tr.appendChild(tdTok);
+
+      const tdMin = document.createElement('td');
+      tdMin.textContent = fmtMinutes(r.avgMinutes);
+      tr.appendChild(tdMin);
+
+      tbody.appendChild(tr);
+    }
+
+    const sum = byExecutor.find(r => r.executor === exec);
+    if (sum) {
+      const tr = document.createElement('tr');
+      tr.className = 'total';
+      tr.style.fontWeight = 'bold';
+
+      const tdExec = document.createElement('td');
+      tdExec.textContent = sum.executor;
+      tr.appendChild(tdExec);
+
+      const tdType = document.createElement('td');
+      tdType.textContent = '全部';
+      tr.appendChild(tdType);
+
+      const tdRuns = document.createElement('td');
+      tdRuns.textContent = String(sum.runs ?? '—');
+      tr.appendChild(tdRuns);
+
+      const tdRate = document.createElement('td');
+      tdRate.textContent = fmtRate(sum.passRate);
+      tr.appendChild(tdRate);
+
+      const tdTok = document.createElement('td');
+      tdTok.textContent = fmtToken(sum.avgTokens);
+      tr.appendChild(tdTok);
+
+      const tdMin = document.createElement('td');
+      tdMin.textContent = fmtMinutes(sum.avgMinutes);
+      tr.appendChild(tdMin);
+
+      tbody.appendChild(tr);
+    }
+  }
+
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  sec.appendChild(wrap);
+}
+
+function renderProjects(data) {
+  const sec = $('projects');
+  sec.innerHTML = '';
+
+  const h2 = document.createElement('h2');
+  h2.textContent = '按项目：CC 与执行者花销';
+  sec.appendChild(h2);
+
+  const projects = data.projects || [];
+  if (projects.length === 0) {
+    const p = document.createElement('p');
+    p.className = 'sub';
+    p.textContent = '还没有数据';
+    sec.appendChild(p);
+    return;
+  }
+
+  const wrap = document.createElement('div');
+  wrap.className = 'table-wrap';
+  const table = document.createElement('table');
+  table.innerHTML = `
+    <thead>
+      <tr>
+        <th>项目</th>
+        <th>派活次数</th>
+        <th>执行者 token</th>
+        <th>CC 等效 token</th>
+        <th>CC 原始 token</th>
+        <th>CC 用时</th>
+        <th>CC / 执行者</th>
+      </tr>
+    </thead>
+  `;
+  const tbody = document.createElement('tbody');
+
+  for (const p of projects) {
+    const tr = document.createElement('tr');
+
+    const tdProj = document.createElement('td');
+    tdProj.textContent = p.project;
+    tr.appendChild(tdProj);
+
+    const tdRuns = document.createElement('td');
+    tdRuns.textContent = String(p.runs ?? '—');
+    tr.appendChild(tdRuns);
+
+    const tdExec = document.createElement('td');
+    tdExec.textContent = formatExecutorBreakdown(p);
+    tr.appendChild(tdExec);
+
+    const tdCCEquiv = document.createElement('td');
+    tdCCEquiv.textContent = fmtToken(p.ccEquiv);
+    tr.appendChild(tdCCEquiv);
+
+    const tdCCTok = document.createElement('td');
+    tdCCTok.textContent = fmtToken(p.ccTokens);
+    tr.appendChild(tdCCTok);
+
+    const tdCCMin = document.createElement('td');
+    tdCCMin.textContent = fmtMinutes(p.ccMinutes);
+    tr.appendChild(tdCCMin);
+
+    const tdRatio = document.createElement('td');
+    tdRatio.textContent = fmtRatio(p.ratio);
+    tr.appendChild(tdRatio);
+
+    tbody.appendChild(tr);
+  }
+
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  sec.appendChild(wrap);
+
+  const maxToken = Math.max(1, ...projects.flatMap(p => [p.executorTokens || 0, p.ccEquiv || 0]));
+  const barMaxW = 420;
+
+  const barsDiv = document.createElement('div');
+  barsDiv.style.marginTop = '20px';
+
+  for (const p of projects) {
+    const card = document.createElement('div');
+    card.className = 'project-bar-card';
+
+    const pTitle = document.createElement('div');
+    pTitle.className = 'project-bar-title';
+    pTitle.textContent = p.project;
+    card.appendChild(pTitle);
+
+    const svg = svgEl('svg', {
+      viewBox: '0 0 650 56',
+      class: 'bar-svg'
+    });
+
+    const wExec = Math.round(((p.executorTokens || 0) / maxToken) * barMaxW);
+    const wCC = Math.round(((p.ccEquiv || 0) / maxToken) * barMaxW);
+
+    const lE = svgEl('text', { x: '0', y: '16', 'font-size': '12', fill: 'var(--muted)' });
+    lE.textContent = '执行者';
+    svg.appendChild(lE);
+
+    const rE = svgEl('rect', { x: '55', y: '5', width: String(Math.max(wExec, 0)), height: '14', rx: '3', fill: 'var(--accent)' });
+    svg.appendChild(rE);
+
+    const vE = svgEl('text', { x: String(55 + wExec + 8), y: '17', 'font-size': '12', fill: 'var(--fg)' });
+    vE.textContent = fmtToken(p.executorTokens);
+    svg.appendChild(vE);
+
+    const lC = svgEl('text', { x: '0', y: '42', 'font-size': '12', fill: 'var(--muted)' });
+    lC.textContent = 'CC 等效';
+    svg.appendChild(lC);
+
+    const rC = svgEl('rect', { x: '55', y: '31', width: String(Math.max(wCC, 0)), height: '14', rx: '3', fill: 'var(--warn)' });
+    svg.appendChild(rC);
+
+    const vC = svgEl('text', { x: String(55 + wCC + 8), y: '43', 'font-size': '12', fill: 'var(--fg)' });
+    vC.textContent = fmtToken(p.ccEquiv);
+    svg.appendChild(vC);
+
+    card.appendChild(svg);
+    barsDiv.appendChild(card);
+  }
+
+  sec.appendChild(barsDiv);
+}
+
+function renderTrend(data) {
+  const sec = $('trend');
+  sec.innerHTML = '';
+
+  const h2 = document.createElement('h2');
+  h2.textContent = '每次协同的 token 趋势';
+  sec.appendChild(h2);
+
+  const sessions = data.sessions || [];
+  const runs = data.runs || [];
+
+  if (sessions.length === 0 && runs.length === 0) {
+    const p = document.createElement('p');
+    p.className = 'sub';
+    p.textContent = '还没有数据';
+    sec.appendChild(p);
+    return;
+  }
+
+  const sessionsBox = document.createElement('div');
+  sessionsBox.className = 'chart-box';
+
+  if (sessions.length === 0) {
+    const p = document.createElement('p');
+    p.className = 'sub';
+    p.textContent = '还没有数据';
+    sessionsBox.appendChild(p);
+  } else {
+    const svgW = 800;
+    const svgH = 320;
+    const padL = 70;
+    const padR = 40;
+    const padT = 40;
+    const padB = 55;
+    const plotW = svgW - padL - padR;
+    const plotH = svgH - padT - padB;
+
+    let maxToken = 1;
+    for (const s of sessions) {
+      if (s.executorTokens && s.executorTokens > maxToken) maxToken = s.executorTokens;
+      if (s.ccEquiv && s.ccEquiv > maxToken) maxToken = s.ccEquiv;
+    }
+
+    const yTicks = [0, maxToken * 0.25, maxToken * 0.5, maxToken * 0.75, maxToken];
+
+    const svg = svgEl('svg', {
+      viewBox: `0 0 ${svgW} ${svgH}`,
+      class: 'chart-svg'
+    });
+
+    for (const val of yTicks) {
+      const y = padT + plotH - (val / maxToken) * plotH;
+      const line = svgEl('line', {
+        x1: String(padL),
+        y1: String(y),
+        x2: String(padL + plotW),
+        y2: String(y),
+        stroke: 'var(--line)',
+        'stroke-dasharray': '3,3'
+      });
+      svg.appendChild(line);
+
+      const txt = svgEl('text', {
+        x: String(padL - 8),
+        y: String(y + 4),
+        'text-anchor': 'end',
+        'font-size': '11',
+        fill: 'var(--muted)'
+      });
+      txt.textContent = fmtToken(Math.round(val));
+      svg.appendChild(txt);
+    }
+
+    const xBase = svgEl('line', {
+      x1: String(padL),
+      y1: String(padT + plotH),
+      x2: String(padL + plotW),
+      y2: String(padT + plotH),
+      stroke: 'var(--line)'
+    });
+    svg.appendChild(xBase);
+
+    const ptsExec = [];
+    const ptsCC = [];
+    const n = sessions.length;
+
+    for (let i = 0; i < n; i++) {
+      const s = sessions[i];
+      const x = n === 1 ? padL + plotW / 2 : padL + (i / (n - 1)) * plotW;
+      const yE = padT + plotH - ((s.executorTokens || 0) / maxToken) * plotH;
+      const yC = padT + plotH - ((s.ccEquiv || 0) / maxToken) * plotH;
+      ptsExec.push({ x, y: yE, s });
+      ptsCC.push({ x, y: yC, s });
+
+      const xLbl = svgEl('text', {
+        x: String(x),
+        y: String(padT + plotH + 20),
+        'text-anchor': 'middle',
+        'font-size': '11',
+        fill: 'var(--muted)'
+      });
+      xLbl.textContent = `${s.date} ${projShort(s.project)}`;
+      svg.appendChild(xLbl);
+    }
+
+    const polyExec = svgEl('polyline', {
+      points: ptsExec.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' '),
+      fill: 'none',
+      stroke: 'var(--accent)',
+      'stroke-width': '2.5'
+    });
+    svg.appendChild(polyExec);
+
+    const polyCC = svgEl('polyline', {
+      points: ptsCC.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' '),
+      fill: 'none',
+      stroke: 'var(--warn)',
+      'stroke-width': '2.5'
+    });
+    svg.appendChild(polyCC);
+
+    for (let i = 0; i < n; i++) {
+      const pe = ptsExec[i];
+      const pc = ptsCC[i];
+      const s = sessions[i];
+
+      const cE = svgEl('circle', {
+        cx: pe.x.toFixed(1),
+        cy: pe.y.toFixed(1),
+        r: '4.5',
+        fill: 'var(--accent)'
+      });
+      const tE = svgEl('title');
+      tE.textContent = `${s.project} (${s.start}–${s.end})\n执行者 token: ${s.executorTokens ?? 0}（${fmtToken(s.executorTokens)}）`;
+      cE.appendChild(tE);
+      svg.appendChild(cE);
+
+      const cC = svgEl('circle', {
+        cx: pc.x.toFixed(1),
+        cy: pc.y.toFixed(1),
+        r: '4.5',
+        fill: 'var(--warn)'
+      });
+      const tC = svgEl('title');
+      tC.textContent = `${s.project} (${s.start}–${s.end})\nCC 等效 token: ${s.ccEquiv ?? 0}（${fmtToken(s.ccEquiv)}）`;
+      cC.appendChild(tC);
+      svg.appendChild(cC);
+    }
+
+    const legG = svgEl('g', { transform: `translate(${svgW - 240}, 15)` });
+
+    const l1 = svgEl('line', { x1: '0', y1: '0', x2: '18', y2: '0', stroke: 'var(--accent)', 'stroke-width': '2.5' });
+    const dot1 = svgEl('circle', { cx: '9', cy: '0', r: '3.5', fill: 'var(--accent)' });
+    const txt1 = svgEl('text', { x: '24', y: '4', 'font-size': '11', fill: 'var(--fg)' });
+    txt1.textContent = '执行者 token';
+    legG.appendChild(l1); legG.appendChild(dot1); legG.appendChild(txt1);
+
+    const l2 = svgEl('line', { x1: '115', y1: '0', x2: '133', y2: '0', stroke: 'var(--warn)', 'stroke-width': '2.5' });
+    const dot2 = svgEl('circle', { cx: '124', cy: '0', r: '3.5', fill: 'var(--warn)' });
+    const txt2 = svgEl('text', { x: '139', y: '4', 'font-size': '11', fill: 'var(--fg)' });
+    txt2.textContent = 'CC 等效 token';
+    legG.appendChild(l2); legG.appendChild(dot2); legG.appendChild(txt2);
+
+    svg.appendChild(legG);
+    sessionsBox.appendChild(svg);
+  }
+
+  sec.appendChild(sessionsBox);
+
+  const h3 = document.createElement('h3');
+  h3.textContent = '单次派活 token 散点图';
+  sec.appendChild(h3);
+
+  const runsBox = document.createElement('div');
+  runsBox.className = 'chart-box';
+
+  const validRuns = runs.filter(r => r.tokens !== null && r.tokens !== undefined);
+  if (validRuns.length === 0) {
+    const p = document.createElement('p');
+    p.className = 'sub';
+    p.textContent = '还没有数据';
+    runsBox.appendChild(p);
+  } else {
+    const PALETTE = ['#2f6fec', '#b7791f', '#1a8f5a', '#9333ea', '#db2777', '#0891b2', '#ea580c'];
+    const execColors = {};
+    let colorIdx = 0;
+    for (const r of validRuns) {
+      if (!execColors[r.executor]) {
+        execColors[r.executor] = PALETTE[colorIdx % PALETTE.length];
+        colorIdx++;
+      }
+    }
+
+    const svgW = 800;
+    const svgH = 220;
+    const padL = 70;
+    const padR = 40;
+    const padT = 35;
+    const padB = 40;
+    const plotW = svgW - padL - padR;
+    const plotH = svgH - padT - padB;
+
+    const maxToken = Math.max(1, ...validRuns.map(r => r.tokens || 0));
+    const yTicks = [0, maxToken * 0.5, maxToken];
+
+    const svg = svgEl('svg', {
+      viewBox: `0 0 ${svgW} ${svgH}`,
+      class: 'chart-svg'
+    });
+
+    for (const val of yTicks) {
+      const y = padT + plotH - (val / maxToken) * plotH;
+      const line = svgEl('line', {
+        x1: String(padL),
+        y1: String(y),
+        x2: String(padL + plotW),
+        y2: String(y),
+        stroke: 'var(--line)',
+        'stroke-dasharray': '3,3'
+      });
+      svg.appendChild(line);
+
+      const txt = svgEl('text', {
+        x: String(padL - 8),
+        y: String(y + 4),
+        'text-anchor': 'end',
+        'font-size': '11',
+        fill: 'var(--muted)'
+      });
+      txt.textContent = fmtToken(Math.round(val));
+      svg.appendChild(txt);
+    }
+
+    const xBase = svgEl('line', {
+      x1: String(padL),
+      y1: String(padT + plotH),
+      x2: String(padL + plotW),
+      y2: String(padT + plotH),
+      stroke: 'var(--line)'
+    });
+    svg.appendChild(xBase);
+
+    const n = validRuns.length;
+    for (let i = 0; i < n; i++) {
+      const r = validRuns[i];
+      const x = n === 1 ? padL + plotW / 2 : padL + (i / (n - 1)) * plotW;
+      const y = padT + plotH - (r.tokens / maxToken) * plotH;
+
+      const circle = svgEl('circle', {
+        cx: x.toFixed(1),
+        cy: y.toFixed(1),
+        r: '5',
+        fill: execColors[r.executor] || 'var(--accent)'
+      });
+
+      const title = svgEl('title');
+      title.textContent = `${r.time} ${r.project} ${r.task} ${r.executor} ${r.tokens} ${r.review || ''}`.trim();
+      circle.appendChild(title);
+      svg.appendChild(circle);
+
+      const xTxt = svgEl('text', {
+        x: x.toFixed(1),
+        y: String(padT + plotH + 18),
+        'text-anchor': 'middle',
+        'font-size': '10',
+        fill: 'var(--muted)'
+      });
+      xTxt.textContent = r.task;
+      svg.appendChild(xTxt);
+    }
+
+    const execEntries = Object.entries(execColors);
+    let legX = svgW - padR - execEntries.length * 75;
+    for (const [exec, color] of execEntries) {
+      const dot = svgEl('circle', { cx: String(legX), cy: '15', r: '4', fill: color });
+      const txt = svgEl('text', { x: String(legX + 8), y: '19', 'font-size': '11', fill: 'var(--fg)' });
+      txt.textContent = exec;
+      svg.appendChild(dot);
+      svg.appendChild(txt);
+      legX += 75;
+    }
+
+    runsBox.appendChild(svg);
+  }
+
+  sec.appendChild(runsBox);
+}
+
+async function load() {
+  const errDiv = $('error');
+  errDiv.textContent = '';
+  try {
+    const res = await fetch('/api/ledger', {
+      headers: { 'X-Collab': '1' }
+    });
+    if (!res.ok) {
+      errDiv.textContent = ERR_PREFIX + 'HTTP ' + res.status;
+      return;
+    }
+    const data = await res.json();
+
+    let metaText = `数据：${data.source || '—'} · ${data.rowCount ?? 0} 行`;
+    if (data.skipped && data.skipped > 0) {
+      metaText += ` · 跳过 ${data.skipped} 行`;
+    }
+    metaText += ` · 生成于 ${data.generated || '—'}`;
+    $('meta-info').textContent = metaText;
+
+    renderByExec(data);
+    renderProjects(data);
+    renderTrend(data);
+  } catch (err) {
+    errDiv.textContent = ERR_PREFIX + (err.message || String(err));
+  }
+}
+
+window.addEventListener('DOMContentLoaded', load);
+</script>
+</body>
+</html>

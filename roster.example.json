@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "controller": {
+    "name": "Claude Code",
+    "note": "第一层固定是 CC：拆任务、写规格和验收测试、决策、终审。CC 自己用什么模型在 Claude Code 里选，名册管不到。"
+  },
+  "layers": {
+    "impl": "实现 / 初审：难的排查、集成、审查苦力层的成果",
+    "labor": "苦力：规格写清楚的代码、批量修改、编译、读资料"
+  },
+  "providers": [
+    {
+      "id": "openai",
+      "name": "Codex 自带（ChatGPT 账号登录）",
+      "kind": "codex-builtin",
+      "probe": "codex-cache"
+    },
+    {
+      "id": "agt",
+      "name": "OpenAI 兼容反代（示例：本机 Gemini 反代）",
+      "kind": "openai-compatible",
+      "base_url": "http://127.0.0.1:8045/v1",
+      "env_key": "AGT_API_KEY",
+      "wire_api": "responses",
+      "probe": "models-endpoint"
+    }
+  ],
+  "executors": [
+    {
+      "id": "codex",
+      "name": "Codex",
+      "provider": "openai",
+      "layer": "impl",
+      "enabled": true,
+      "tier": 3,
+      "cost": "中：适度用",
+      "default_model": "gpt-5-codex",
+      "enabled_models": [
+        "gpt-5-codex"
+      ],
+      "notes": "擅长难的排查、集成和审查；token 用量少",
+      "clean_config": true,
+      "reasoning": "high"
+    },
+    {
+      "id": "gemini",
+      "name": "Gemini",
+      "provider": "agt",
+      "layer": "labor",
+      "enabled": true,
+      "tier": 2,
+      "cost": "低：额度最多",
+      "default_model": "gemini-2.5-pro",
+      "enabled_models": [
+        "gemini-2.5-pro"
+      ],
+      "notes": "规格写清楚的实现、批量修改、读资料；比较啰嗦，token 用量是 Codex 的好几倍；反代偶尔让对话失真",
+      "clean_config": true
+    }
+  ]
+}

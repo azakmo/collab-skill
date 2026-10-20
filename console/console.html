@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>协同控制台</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--fg:#1d2330;--muted:#6b7385;--line:#e2e5eb;--accent:#2f6fec;--ok:#1a8f5a;--warn:#b7791f;--bad:#c53030;--chip:#eef2fb}
+@media (prefers-color-scheme:dark){:root{--bg:#14171d;--card:#1c2028;--fg:#e6e9ef;--muted:#9aa3b5;--line:#2c323d;--accent:#6b9bff;--ok:#3fbf86;--warn:#e0a84a;--bad:#f07171;--chip:#252c3a}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,"Microsoft YaHei",sans-serif}
+main{max-width:1100px;margin:0 auto;padding:20px 16px 80px}
+h1{font-size:20px;margin:0 0 4px}
+.sub{color:var(--muted);margin:0 0 18px}
+.layer{margin:18px 0}
+.layer h2{font-size:15px;margin:0 0 2px}
+.layer p{color:var(--muted);margin:0 0 10px;font-size:13px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
+.card.off{opacity:.55}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0}
+.row label{color:var(--muted);font-size:12px;min-width:56px}
+input[type=text],select,textarea{background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:5px 8px;font:inherit;min-width:0}
+input[type=text]{flex:1}
+textarea{width:100%;min-height:44px;resize:vertical}
+button{background:var(--chip);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:5px 10px;font:inherit;cursor:pointer}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.models{max-height:180px;overflow:auto;border:1px solid var(--line);border-radius:6px;padding:6px;margin-top:6px}
+.models label{display:flex;gap:6px;align-items:center;font-size:13px;color:var(--fg);min-width:0}
+.tag{display:inline-block;font-size:12px;padding:1px 7px;border-radius:99px;background:var(--chip);color:var(--muted)}
+.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}
+.cc{border-left:4px solid var(--accent)}
+.bar{position:fixed;left:0;right:0;bottom:0;background:var(--card);border-top:1px solid var(--line);padding:10px 16px;display:flex;gap:10px;align-items:center;justify-content:center}
+#msg{min-width:200px}
+details{margin-top:18px}
+summary{cursor:pointer;font-weight:600}
+table{border-collapse:collapse;width:100%;font-size:13px}
+td,th{border-bottom:1px solid var(--line);padding:6px;text-align:left;vertical-align:top}
+</style>
+</head>
+<body>
+<main>
+  <div style="display:flex;align-items:center;gap:12px;margin:0 0 4px">
+    <h1 style="margin:0">协同控制台</h1>
+    <a href="/ledger" style="color:var(--accent);text-decoration:none;font-size:13px">账本 →</a>
+  </div>
+  <p class="sub">在这里选第二层、第三层用哪些执行者和模型。保存后写入 <code>roster.json</code>；派活脚本只能调用这里勾选过的模型。</p>
+
+  <div class="card cc">
+    <b>第一层 · 主控：Claude Code</b> <span class="tag">固定</span>
+    <div class="sub" id="ccnote" style="margin:4px 0 0"></div>
+  </div>
+
+  <section class="layer"><h2>第二层 · 实现 / 初审</h2><p id="impl-desc"></p><div class="grid" id="impl"></div></section>
+  <section class="layer"><h2>第三层 · 苦力</h2><p id="labor-desc"></p><div class="grid" id="labor"></div></section>
+
+  <details>
+    <summary>模型来源（providers）</summary>
+    <p class="sub">密钥不填在这里：先在 Windows 用户环境变量里设好，这里只写变量名。</p>
+    <table id="providers"></table>
+    <div class="card" style="margin-top:10px">
+      <b>新增模型来源</b>（OpenAI 兼容接口，比如国产模型或局域网里其他电脑上的模型）
+      <div class="row"><label>id</label><input type="text" id="np-id" placeholder="如 deepseek（小写）"></div>
+      <div class="row"><label>名称</label><input type="text" id="np-name" placeholder="显示名"></div>
+      <div class="row"><label>地址</label><input type="text" id="np-url" placeholder="https://api.example.com/v1"></div>
+      <div class="row"><label>密钥变量</label><input type="text" id="np-env" placeholder="环境变量名，如 DEEPSEEK_API_KEY"></div>
+      <div class="row"><label>接口格式</label><select id="np-wire"><option value="responses">responses（Codex 执行壳要求）</option><option value="chat">chat（可能接不上 Codex 执行壳，要实测）</option></select></div>
+      <div class="row"><button onclick="addProvider()">加入</button></div>
+    </div>
+  </details>
+
+  <details>
+    <summary>新增执行者</summary>
+    <div class="card" style="margin-top:10px">
+      <div class="row"><label>id</label><input type="text" id="ne-id" placeholder="如 deepseek-labor（小写）"></div>
+      <div class="row"><label>名称</label><input type="text" id="ne-name"></div>
+      <div class="row"><label>模型来源</label><select id="ne-provider"></select></div>
+      <div class="row"><label>分层</label><select id="ne-layer"><option value="labor">第三层 · 苦力</option><option value="impl">第二层 · 实现/初审</option></select></div>
+      <div class="row"><button onclick="addExecutor()">加入</button>（加入后点「探测模型」再勾选）</div>
+    </div>
+  </details>
+</main>
+
+<div class="bar"><span id="msg"></span><button onclick="load()">放弃修改</button><button class="primary" onclick="save()">保存</button></div>
+
+<script>
+let R = null, ENV = {}, PROBED = {};
+const H = {'X-Collab':'1','Content-Type':'application/json'};
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function msg(t, cls){ $('msg').innerHTML = `<span class="${cls||''}">${esc(t)}</span>`; }
+
+async function load(){
+  const r = await fetch('/api/roster',{headers:H}).then(r=>r.json());
+  R = r.roster; ENV = r.env || {}; render(); msg('已载入');
+}
+
+function render(){
+  $('ccnote').textContent = R.controller?.note || '';
+  $('impl-desc').textContent = R.layers?.impl || '';
+  $('labor-desc').textContent = R.layers?.labor || '';
+  for (const layer of ['impl','labor']){
+    const box = $(layer); box.innerHTML = '';
+    R.executors.map((e,i)=>[e,i]).filter(([e])=>e.layer===layer).forEach(([e,i])=> box.appendChild(card(e,i)));
+    if (!box.children.length) box.innerHTML = '<div class="sub">（这一层还没有执行者）</div>';
+  }
+  $('providers').innerHTML = '<tr><th>id</th><th>名称</th><th>类型</th><th>地址</th><th>密钥变量</th></tr>' + R.providers.map(p =>
+    `<tr><td>${esc(p.id)}</td><td>${esc(p.name)}</td><td>${esc(p.kind)}${p.wire_api?' / '+esc(p.wire_api):''}</td><td>${esc(p.base_url||'—')}</td>
+     <td>${p.env_key ? esc(p.env_key)+' '+(ENV[p.env_key]?'<span class="ok">已设置</span>':'<span class="bad">未设置</span>') : '—'}</td></tr>`).join('');
+  $('ne-provider').innerHTML = R.providers.map(p=>`<option value="${esc(p.id)}">${esc(p.name||p.id)}</option>`).join('');
+}
+
+function card(e, i){
+  const pv = R.providers.find(p=>p.id===e.provider) || {};
+  const models = [...new Set([...(e.enabled_models||[]), ...(PROBED[e.provider]||[])])];
+  const d = document.createElement('div');
+  d.className = 'card' + (e.enabled ? '' : ' off');
+  d.innerHTML = `
+    <div class="row" style="justify-content:space-between">
+      <b>${esc(e.name||e.id)}</b>
+      <label style="min-width:0"><input type="checkbox" ${e.enabled?'checked':''} onchange="R.executors[${i}].enabled=this.checked;render()"> 启用</label>
+    </div>
+    <div class="row"><span class="tag">${esc(e.id)}</span><span class="tag">${esc(pv.name||e.provider)}</span></div>
+    <div class="row"><label>分层</label><select onchange="R.executors[${i}].layer=this.value;render()">
+      <option value="impl" ${e.layer==='impl'?'selected':''}>第二层 · 实现/初审</option><option value="labor" ${e.layer==='labor'?'selected':''}>第三层 · 苦力</option></select>
+      <label>能力等级</label><select onchange="R.executors[${i}].tier=+this.value">${[1,2,3].map(t=>`<option ${e.tier==t?'selected':''}>${t}</option>`).join('')}</select></div>
+    <div class="row"><label>成本</label><input type="text" value="${esc(e.cost)}" onchange="R.executors[${i}].cost=this.value"></div>
+    <div class="row"><label>默认模型</label><select onchange="R.executors[${i}].default_model=this.value">
+      ${(e.enabled_models||[]).map(m=>`<option ${m===e.default_model?'selected':''}>${esc(m)}</option>`).join('') || '<option value="">（先勾选模型）</option>'}</select>
+      <button onclick="probe('${esc(e.provider)}')">探测模型</button></div>
+    <div class="models">${models.length ? models.map(m=>`<label><input type="checkbox" ${(e.enabled_models||[]).includes(m)?'checked':''}
+      onchange="toggleModel(${i},'${esc(m)}',this.checked)"> ${esc(m)}</label>`).join('') : '<span class="sub">点「探测模型」读取这个来源的可用模型</span>'}</div>
+    <div class="row"><textarea placeholder="擅长 / 不擅长" onchange="R.executors[${i}].notes=this.value">${esc(e.notes)}</textarea></div>`;
+  return d;
+}
+
+function toggleModel(i, m, on){
+  const e = R.executors[i]; const s = new Set(e.enabled_models||[]);
+  on ? s.add(m) : s.delete(m); e.enabled_models = [...s];
+  if (!e.enabled_models.includes(e.default_model)) e.default_model = e.enabled_models[0] || '';
+  render();
+}
+
+async function probe(pid){
+  const pv = R.providers.find(p=>p.id===pid); msg('正在探测 '+pid+' …');
+  const r = await fetch('/api/probe',{method:'POST',headers:H,body:JSON.stringify(pv)}).then(r=>r.json());
+  if (r.error){ msg('探测失败：'+r.error,'bad'); return; }
+  PROBED[pid] = r.models; render(); msg(`${pid}：找到 ${r.models.length} 个模型（勾选后记得保存）`,'ok');
+}
+
+function addProvider(){
+  const p = {id:$('np-id').value.trim(), name:$('np-name').value.trim(), kind:'openai-compatible',
+             base_url:$('np-url').value.trim(), env_key:$('np-env').value.trim(), wire_api:$('np-wire').value, probe:'models-endpoint'};
+  if (!/^[a-z][a-z0-9_-]*$/.test(p.id)) return msg('id 只能用小写字母、数字、- 和 _','bad');
+  if (R.providers.some(x=>x.id===p.id)) return msg('这个 id 已经存在','bad');
+  if (!/^https?:\/\//.test(p.base_url)) return msg('地址要以 http:// 或 https:// 开头','bad');
+  if (p.env_key && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(p.env_key)) return msg('密钥变量只填环境变量名，不要填密钥本身','bad');
+  R.providers.push(p); render(); msg('已加入模型来源 '+p.id+'（还没保存）','ok');
+}
+
+function addExecutor(){
+  const e = {id:$('ne-id').value.trim(), name:$('ne-name').value.trim()||$('ne-id').value.trim(), provider:$('ne-provider').value,
+             layer:$('ne-layer').value, enabled:false, tier:1, cost:'', default_model:'', enabled_models:[], notes:''};
+  if (!/^[a-z][a-z0-9_-]*$/.test(e.id)) return msg('id 只能用小写字母、数字、- 和 _','bad');
+  if (R.executors.some(x=>x.id===e.id)) return msg('这个 id 已经存在','bad');
+  R.executors.push(e); render(); msg('已加入执行者 '+e.id+'：探测并勾选模型后再启用（还没保存）','ok');
+}
+
+async function save(){
+  const r = await fetch('/api/roster',{method:'POST',headers:H,body:JSON.stringify(R)}).then(r=>r.json());
+  r.ok ? msg('已保存到 roster.json（旧版本备份为 roster.json.bak）','ok') : msg('没保存：'+r.error,'bad');
+}
+
+load().catch(e=>msg('载入失败：'+e,'bad'));
+</script>
+</body>
+</html>
