@@ -48,6 +48,6 @@ if ($Record) {
         minutes = [math]::Round(($Until - $Since).TotalMinutes, 1); tokens = $total
         self_status = ''; review = ''; note = "calls=$calls avg_ctx=$avgCtx out=$out equiv=$equiv"
     }
-    Save-Ledger (@(if (Test-Path $script:LedgerPath) { Import-Csv $script:LedgerPath -Encoding utf8 }) + $row)
+    Update-Ledger { param($rows) @($rows) + $row }
     "  recorded to ledger as executor=cc task=$Task"
 }

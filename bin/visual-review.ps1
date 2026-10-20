@@ -11,6 +11,9 @@ param(
     [int]$MaxImages = 16
 )
 $ErrorActionPreference = 'Stop'
+# Any unexpected error is a reviewer error (6), never exit 1: the pipeline reads 1 as "visual FAIL" and would send
+# correct work back for rework because the proxy was down.
+trap { "visual reviewer error: $($_.Exception.Message)"; exit 6 }
 . (Join-Path $PSScriptRoot 'tools.ps1')
 $Project = (Resolve-Path $Project).Path
 $taskFile = Join-Path $Project "collab\tasks\$Task.md"
@@ -28,12 +31,16 @@ $shots = @(if (Test-Path $shotDir) { Get-ChildItem $shotDir -Recurse -File -Incl
 if (-not $shots) { "VISUAL RESULT: FAIL`nFAIL no screenshots in $shotDir"; exit 5 }
 $refs = @((Get-Field '参考图', 'Reference images') -split '[,，;；]' | ForEach-Object { $_.Trim() } | Where-Object { $_ -and $_ -notin '无', 'none' } |
     ForEach-Object { Join-Path $Project $_ } | Where-Object { Test-Path $_ } | ForEach-Object { Get-Item $_ })
-if ($shots.Count + $refs.Count -gt $MaxImages) { $shots = $shots | Select-Object -First ($MaxImages - $refs.Count) }
+if ($refs.Count -ge $MaxImages) { $refs = @($refs | Select-Object -First ([Math]::Max(1, [int]($MaxImages / 4)))) }
+if ($shots.Count + $refs.Count -gt $MaxImages) { $shots = @($shots | Select-Object -First ($MaxImages - $refs.Count)) }
 
 # Contact sheet: every screenshot scaled to 480px tall, 4 per row, file name under each. CC looks at this one image.
 Add-Type -AssemblyName System.Drawing
-$h = 480; $pad = 12; $label = 28; $cols = [Math]::Min(4, $shots.Count)
-$imgs = foreach ($s in $shots) { $i = [Drawing.Image]::FromFile($s.FullName); [pscustomobject]@{ Img = $i; W = [int]($i.Width * $h / $i.Height); Name = $s.Name } }
+$h = 480; $pad = 12; $label = 28
+# Formats System.Drawing can't open (webp) are left out of the sheet only; the reviewer still gets them.
+$imgs = @(foreach ($s in $shots) { try { $i = [Drawing.Image]::FromFile($s.FullName); [pscustomobject]@{ Img = $i; W = [int]($i.Width * $h / $i.Height); Name = $s.Name } } catch {} })
+if (-not $imgs) { $imgs = @([pscustomobject]@{ Img = (New-Object Drawing.Bitmap 320, $h); W = 320; Name = '(no previewable image)' }) }
+$cols = [Math]::Min(4, $imgs.Count)
 $cellW = ($imgs | Measure-Object W -Maximum).Maximum
 $rows = [Math]::Ceiling($imgs.Count / $cols)
 $sheet = New-Object Drawing.Bitmap ([int]($cols * ($cellW + $pad) + $pad)), ([int]($rows * ($h + $label + $pad) + $pad))
@@ -50,6 +57,7 @@ $sheet.Save($contact, [Drawing.Imaging.ImageFormat]::Png); $g.Dispose(); $sheet.
 
 # Reviewer: read-only, no tools needed; images go in with -i in this order (references first).
 $sel = Resolve-Executor $Executor
+$pick = Select-HealthyModel $sel; if ($pick -ne $sel.Model) { $sel = Resolve-Executor $Executor $pick }
 $all = @($refs) + @($shots)
 $list = ($all | ForEach-Object -Begin { $n = 0 } -Process { $n++; $kind = if ($_ -in $refs) { 'reference' } else { 'screenshot' }; "$n. [$kind] $($_.Name)" }) -join "`n"
 $prompt = @"

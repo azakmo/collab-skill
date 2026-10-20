@@ -69,12 +69,25 @@ function Get-ContextArgs([object]$Ex, [int]$ContextWindow) {
 function Measure-ModelLatency([object]$Pv, [string]$Model, [int]$TimeoutSec = 20) {
     try {
         $null = Get-ProviderArgs $Pv   # sets the key env var; throws when the endpoint does not answer
-        $key = [Environment]::GetEnvironmentVariable($Pv.env_key, 'Process')
-        $body = @{ model = $Model; max_tokens = 64; messages = @(@{ role = 'user'; content = 'What is 17+25? Reply with the number only.' }) } | ConvertTo-Json -Depth 4
+        $hdr = @{}
+        if ($Pv.env_key) { $hdr.Authorization = "Bearer $([Environment]::GetEnvironmentVariable($Pv.env_key, 'Process'))" }
+        # Check the answer, not just the status: retired models still return 200 with a canned
+        # "... is no longer available" text.
+        $q = 'What is 17+25? Reply with the number only.'
         $sw = [Diagnostics.Stopwatch]::StartNew()
-        $r = Invoke-RestMethod "$($Pv.base_url)/chat/completions" -Method Post -ContentType 'application/json' `
-            -Headers @{ Authorization = "Bearer $key" } -Body $body -TimeoutSec $TimeoutSec
-        if ("$($r.choices[0].message.content)" -notmatch '\b42\b') { return -1 }
+        try {
+            $body = @{ model = $Model; max_tokens = 64; messages = @(@{ role = 'user'; content = $q }) } | ConvertTo-Json -Depth 4
+            $r = Invoke-RestMethod "$($Pv.base_url)/chat/completions" -Method Post -ContentType 'application/json' -Headers $hdr -Body $body -TimeoutSec $TimeoutSec
+            $text = "$($r.choices[0].message.content)"
+        } catch {
+            # Responses-only providers have no /chat/completions (404/405): ask through /responses instead.
+            if ($_.Exception.Response.StatusCode.value__ -notin 404, 405) { throw }
+            $left = [Math]::Max(5, $TimeoutSec - [int]$sw.Elapsed.TotalSeconds)
+            $body = @{ model = $Model; max_output_tokens = 64; input = $q } | ConvertTo-Json
+            $r = Invoke-RestMethod "$($Pv.base_url)/responses" -Method Post -ContentType 'application/json' -Headers $hdr -Body $body -TimeoutSec $left
+            $text = if ($r.output_text) { "$($r.output_text)" } else { "$(@($r.output | ForEach-Object { $_.content } | ForEach-Object { $_.text }) -join ' ')" }
+        }
+        if ($text -notmatch '\b42\b') { return -1 }
         [Math]::Round($sw.Elapsed.TotalSeconds, 1)
     } catch { -1 }
 }
@@ -214,6 +227,17 @@ function Save-Ledger([object[]]$Rows) {
     $Rows | Select-Object $script:LedgerColumns | Export-Csv -Path $script:LedgerPath -NoTypeInformation -Encoding utf8BOM
 }
 
+# Read-modify-write of the ledger under a machine-wide lock: run-batch runs pipelines in parallel, and two unlocked
+# writers that import the CSV at the same time silently drop each other's rows. $Mutate gets the rows, returns new rows.
+function Update-Ledger([scriptblock]$Mutate) {
+    $mx = New-Object Threading.Mutex($false, 'Global\collab-ledger')
+    try { $null = $mx.WaitOne() } catch [Threading.AbandonedMutexException] {}   # previous holder died: we own it now
+    try {
+        $rows = @(if (Test-Path $script:LedgerPath) { Import-Csv $script:LedgerPath -Encoding utf8 })
+        Save-Ledger @(& $Mutate $rows)
+    } finally { $mx.ReleaseMutex(); $mx.Dispose() }
+}
+
 function Add-LedgerRow([object]$Ctx, [string]$Name, [string]$Flags, [int]$Rc, [datetime]$Start, [string]$ErrLog) {
     try {
         $log = if (Test-Path $ErrLog) { Get-Content $ErrLog -Encoding utf8 } else { @() }
@@ -236,8 +260,7 @@ function Add-LedgerRow([object]$Ctx, [string]$Name, [string]$Flags, [int]$Rc, [d
             review      = ''
             note        = ''
         }
-        $rows = @(if (Test-Path $script:LedgerPath) { Import-Csv $script:LedgerPath -Encoding utf8 }) + $row
-        Save-Ledger $rows
+        Update-Ledger { param($rows) @($rows) + $row }
         Write-Host "  ledger: $($row.executor) $($row.model) tokens=$($row.tokens) $($row.minutes)min"
     } catch { Write-Host "  ledger write failed: $($_.Exception.Message)" }
 }
@@ -250,6 +273,22 @@ function Invoke-Executor {
     $rc = Invoke-ExecutorCore -Exe $Exe -ArgList $ArgList -Ctx $Ctx -TimeoutMin $TimeoutMin -Name $Name
     Add-LedgerRow -Ctx $Ctx -Name $Name -Flags $Flags -Rc $rc -Start $start -ErrLog "$($Ctx.LogBase).$Name.err.log"
     $rc
+}
+
+# True when the last $Repeat model replies in a codex exec log are identical. In that log every reply starts on the
+# line after a line that is exactly "codex"; only the first line of each reply is compared. Reads the last 64 KB only.
+function Test-OutputLoop([string]$Path, [int]$Repeat = 6) {
+    try {
+        $fs = [IO.File]::Open($Path, 'Open', 'Read', 'ReadWrite')
+        try {
+            $n = [int][Math]::Min($fs.Length, 65536)
+            $null = $fs.Seek(-$n, 'End'); $buf = New-Object byte[] $n; $null = $fs.Read($buf, 0, $n)
+        } finally { $fs.Dispose() }
+        $lines = [Text.Encoding]::UTF8.GetString($buf) -split "`r?`n"
+        $msgs = @(for ($i = 0; $i -lt $lines.Count - 1; $i++) { if ($lines[$i] -ceq 'codex' -and $lines[$i + 1].Trim()) { $lines[$i + 1].Trim() } })
+        if ($msgs.Count -lt $Repeat) { return $false }
+        @($msgs | Select-Object -Last $Repeat | Select-Object -Unique).Count -eq 1
+    } catch { $false }
 }
 
 function Invoke-ExecutorCore {
@@ -267,24 +306,32 @@ function Invoke-ExecutorCore {
         -RedirectStandardInput $stdin -RedirectStandardOutput $out -RedirectStandardError $err `
         -NoNewWindow -PassThru
     $null = $p.Handle  # keep the handle so ExitCode is available later
-    # Wait in slices: a run whose log has not grown for $stallMin (hung proxy request) is killed as STALLED (4),
-    # which the pipeline treats as an interruption and resumes. Long silent builds: raise COLLAB_STALL_MIN.
+    # Wait in slices. Two watchdogs besides the timeout:
+    # - STALLED (4): the log has not grown for $stallMin (request hanging in the proxy). Long silent builds: raise
+    #   COLLAB_STALL_MIN. The pipeline resumes the same session.
+    # - LOOPING (5): the model's last $loopN replies are identical (e.g. a retired model answering every turn with the
+    #   same canned text, so the log keeps growing). COLLAB_LOOP_REPEAT tunes N. The pipeline restarts fresh
+    #   (resuming would replay the poisoned context).
     $stallMin = if ($env:COLLAB_STALL_MIN) { [int]$env:COLLAB_STALL_MIN } else { 12 }
+    $loopN = if ($env:COLLAB_LOOP_REPEAT) { [int]$env:COLLAB_LOOP_REPEAT } else { 6 }
     $deadline = (Get-Date).AddMinutes($TimeoutMin)
     $lastSize = -1; $lastGrow = Get-Date
     while (-not $p.WaitForExit(30000)) {
         $size = if (Test-Path $err) { (Get-Item $err).Length } else { 0 }
-        if ($size -ne $lastSize) { $lastSize = $size; $lastGrow = Get-Date }
-        $why = if ((Get-Date) -gt $deadline) { 'timeout' } elseif (((Get-Date) - $lastGrow).TotalMinutes -ge $stallMin) { 'stall' } else { '' }
+        $grew = $size -ne $lastSize
+        if ($grew) { $lastSize = $size; $lastGrow = Get-Date }
+        $why = if ((Get-Date) -gt $deadline) { 'timeout' }
+            elseif (((Get-Date) - $lastGrow).TotalMinutes -ge $stallMin) { 'stall' }
+            elseif ($grew -and (Test-OutputLoop $err $loopN)) { 'loop' }
+            else { '' }
         if (-not $why) { continue }
         & taskkill.exe /PID $p.Id /T /F | Out-Null
         Remove-Item $stdin -ErrorAction SilentlyContinue
-        if ($why -eq 'timeout') {
-            Write-Host "[$(Get-Date -Format s)] $Name TIMEOUT after ${TimeoutMin}m, process tree killed"
-            return 3
+        switch ($why) {
+            'timeout' { Write-Host "[$(Get-Date -Format s)] $Name TIMEOUT after ${TimeoutMin}m, process tree killed"; return 3 }
+            'stall' { Write-Host "[$(Get-Date -Format s)] $Name STALLED: no log output for ${stallMin}m, process tree killed"; return 4 }
+            'loop' { Write-Host "[$(Get-Date -Format s)] $Name LOOPING: last $loopN model replies identical, process tree killed"; return 5 }
         }
-        Write-Host "[$(Get-Date -Format s)] $Name STALLED: no log output for ${stallMin}m, process tree killed"
-        return 4
     }
     Remove-Item $stdin -ErrorAction SilentlyContinue
     $code = $p.ExitCode

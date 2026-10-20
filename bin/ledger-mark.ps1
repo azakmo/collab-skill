@@ -13,10 +13,12 @@ $ErrorActionPreference = 'Stop'
 $Review = @{ pass = '通过'; rework = '返工'; failed = '失败'; cancelled = '取消'; interrupted = '中断' }[$Review] ?? $Review
 
 $Project = (Resolve-Path $Project).Path
-$rows = @(Import-Csv $script:LedgerPath -Encoding utf8)
-$hit = $rows | Where-Object { $_.project -eq $Project -and $_.task -eq $Task } | Select-Object -Last 1
-if (-not $hit) { throw "no ledger row for $Project / $Task" }
-$hit.review = $Review
-if ($Note) { $hit.note = $Note }
-Save-Ledger $rows
+Update-Ledger {
+    param($rows)
+    $hit = $rows | Where-Object { $_.project -eq $Project -and $_.task -eq $Task } | Select-Object -Last 1
+    if (-not $hit) { throw "no ledger row for $Project / $Task" }
+    $hit.review = $Review
+    if ($Note) { $hit.note = $Note }
+    $rows
+}
 "marked $Task -> $Review"

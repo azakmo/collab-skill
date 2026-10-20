@@ -52,7 +52,7 @@ CC 每调用一次模型，都要把整段上下文重新读一遍，所以 toke
      - Gemini：`& "$env:COLLAB_HOME\bin\run-gemini.ps1" -Project <目录> -Task T00n [-TimeoutMin 20] [-Network] [-Toolchain android]`
      - Codex：`& "$env:COLLAB_HOME\bin\run-codex.ps1" -Project <目录> -Task T00n [-TimeoutMin 30] [-Network] [-Toolchain android]`
    - 派完就结束这一轮，等完成通知。**不轮询、不读日志、不中途检查**。
-   - 中断不用 CC 管：执行者崩溃、卡死（连续 12 分钟没有日志输出）或反代断开时，流水线会自己等反代恢复，再用 `codex exec resume` 接着原会话做，不占返工轮数。手动派活遇到退出码不是 0/2/3 的，用 `run-executor.ps1 ... -Resume <err.log 里的 session id>` 续跑，不要从头重派。
+   - 中断不用 CC 管：执行者崩溃、卡死（连续 12 分钟没有日志输出）或反代断开时，流水线会自己等反代恢复，再用 `codex exec resume` 接着原会话做，不占返工轮数；原地空转（最近 6 次回复一字不差，退出码 5）则从头重开。手动派活遇到退出码不是 0/2/3 的，用 `run-executor.ps1 ... -Resume <err.log 里的 session id>` 续跑，不要从头重派。
    - 需要联网和编译环境的（下载依赖、Gradle、npm）照样下放，加 `-Network` 和 `-Toolchain`，时限放宽到 30–60 分钟。
 5. **单次派活收到完成通知后先跑测试**（用流水线的话这一步已经自动做了）：`& "$env:COLLAB_HOME\bin\verify.ps1" -Project <目录> -Task T00n -Mark`
    - 全部 PASS：读回报的「未完成 / 疑问」一节，抽查一两处关键产物（运行一下、看一眼哈希或输出），就算通过。不逐行读代码。

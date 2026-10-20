@@ -215,7 +215,7 @@ Creates a research task `collab\tasks\R<timestamp>.md`, sends it to an executor 
 - Risk: bulk calls through a third-party proxy may get your account restricted — assess this yourself.
 - Proxies occasionally garble the conversation format, so don't skip the Codex review and CC's final review.
 
-Exit codes: 0 = executor finished and wrote a report; 2 = finished without a report; 3 = timed out and killed; 4 = stalled (no log output for 12 min); other = the executor's own error or an interrupted process. The pipeline resumes 4 and "other" (see above).
+Exit codes: 0 = executor finished and wrote a report; 2 = finished without a report; 3 = timed out and killed; 4 = stalled (no log output for 12 min); 5 = looping (the model's last 6 replies are identical, e.g. a retired model answering every turn with the same canned text — the log keeps growing so the stall check never fires; tune with `COLLAB_LOOP_REPEAT`); other = the executor's own error or an interrupted process. The pipeline resumes the same session for 4 and "other" and restarts fresh for 5 (see above). Ledger writes take a machine-wide lock, so parallel pipelines don't overwrite each other's rows.
 
 ## License
 

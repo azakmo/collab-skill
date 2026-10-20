@@ -36,6 +36,7 @@ $rows = foreach ($x in $procs) {
         result   = if ($r) { $r.result } else { "CRASH(exit $($x.Proc.ExitCode))" }
         by       = if ($r) { $r.final_executor } else { '' }
         attempts = if ($r) { @($r.attempts).Count } else { 0 }
+        visual   = if ($r -and $r.contact_sheet) { "$((@($r.attempts) | Select-Object -Last 1).visual)" } else { '' }
         tokens   = [long]($mine | ForEach-Object { [long]("0$($_.tokens)") } | Measure-Object -Sum).Sum
         minutes  = [math]::Round(((Get-Date) - $start).TotalMinutes, 1)
     }

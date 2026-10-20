@@ -3,8 +3,8 @@
 #   & "$env:COLLAB_HOME\bin\run-pipeline.ps1" -Project <dir> -Task T00n [-MaxRework 2] [-MaxResume 2] [-ProviderWaitMin 15]
 # Result: PASS | NO_TEST (no 验收测试 block, CC must review) | NEEDS_CC (every executor in the chain failed)
 # Interruptions are not rework: a crash (exit code other than 0/2/3), a stall (4) or an unreachable provider waits for
-# the provider and resumes the same codex session (keeps its progress) up to MaxResume times, without using up a
-# rework round. Exit 2 (finished without a report) gets one resume that only asks for the report.
+# the provider and resumes the same codex session (keeps its progress); a loop (5) restarts fresh instead. Up to
+# MaxResume times, without using up a rework round. Exit 2 (finished without a report) gets one report-only resume.
 param(
     [Parameter(Mandatory)][string]$Project,
     [Parameter(Mandatory)][string]$Task,
@@ -76,10 +76,14 @@ $attempts = @(); $result = 'NEEDS_CC'; $prev = $null
         while ($rc -notin 0, 2, 3 -and $resumes -lt $MaxResume) {
             $resumes++
             $attempts += [pscustomobject]@{ executor = $ex; round = $round; rc = $rc; verify = "interrupted, resume $resumes" }
-            try { & (Join-Path $PSScriptRoot 'ledger-mark.ps1') -Project $Project -Task $Task -Review interrupted -Note "pipeline rc=$rc, resume $resumes" | Out-Null } catch {}
+            # -100 = the runner failed before starting: there is no ledger row of this run to mark.
+            if ($rc -ne -100) {
+                try { & (Join-Path $PSScriptRoot 'ledger-mark.ps1') -Project $Project -Task $Task -Review interrupted -Note "pipeline rc=$rc, resume $resumes" | Out-Null } catch {}
+            }
             Wait-Provider $ex
-            $sid = Get-RoundSession $ex $since
-            Write-Host "  interrupted (rc=$rc) -> $(if ($sid) { "resume session $sid" } else { 'no session yet, fresh start' })"
+            # 5 = looping: the session's context is poisoned, start fresh and never resume it later.
+            if ($rc -eq 5) { $since = (Get-Date).AddSeconds(-2); $sid = '' } else { $sid = Get-RoundSession $ex $since }
+            Write-Host "  interrupted (rc=$rc) -> $(if ($sid) { "resume session $sid" } else { 'fresh start' })"
             $rc = Invoke-Run $ex $sid
         }
         # Finished without a report: one cheap resume that only asks for it.
