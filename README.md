@@ -1,5 +1,13 @@
 # collab: a three-agent workflow orchestrated by Claude Code (CC + Gemini + Codex)
 
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+![Platform: Windows](https://img.shields.io/badge/platform-Windows-0078D6)
+![PowerShell 7+](https://img.shields.io/badge/PowerShell-7%2B-5391FE)
+![Claude Code skill](https://img.shields.io/badge/Claude%20Code-skill-D97757)
+![Languages: English | 中文](https://img.shields.io/badge/lang-English%20%7C%20%E4%B8%AD%E6%96%87-555)
+[![GitHub stars](https://img.shields.io/github/stars/azakmo/collab-skill?style=flat)](https://github.com/azakmo/collab-skill/stargazers)
+[![Last commit](https://img.shields.io/github/last-commit/azakmo/collab-skill)](https://github.com/azakmo/collab-skill/commits/main)
+
 **English** | [简体中文](README.zh-CN.md)
 
 Let Claude Code (CC) do only the thinking — planning, writing specs, reviewing — and hand the actual coding, bulk edits and reading to cheaper executors (Gemini / Codex). This saves a large share of your CC quota.
@@ -12,6 +20,46 @@ Let Claude Code (CC) do only the thinking — planning, writing specs, reviewing
 > Platform: Windows + PowerShell 7 (pwsh). Executors run through the [Codex CLI](https://github.com/openai/codex).
 >
 > **Languages:** English (default) and Simplified Chinese. The skill, task/report templates, executor instructions and generated text all come in both. Choose with `"language": "en" | "zh-CN"` in `roster.json` (or the `COLLAB_LANG` environment variable). Task files written in either language are parsed regardless of the setting.
+
+## Real-world results
+
+Numbers from the author's own ledger (Oct 2026, 5 real projects, 34 dispatched tasks), de-identified. CC's cost is measured from Claude Code transcripts by `cc-usage.ps1` as **equivalent tokens** (input + cache write × 1.25 + cache read × 0.1 + output × 5, i.e. weighted by price); executor tokens are the totals reported by the Codex CLI.
+
+**Same kind of task, CC alone vs. collab** (a short promotional video, built with a code-rendering pipeline):
+
+| | CC alone | With collab | Change |
+|---|---:|---:|---:|
+| CC model calls | 176 | 31 | −82% |
+| CC average context | ~440k | ~104k | −76% |
+| CC cost per call (equiv.) | 54.8k | 16.8k | −69% |
+| **CC total (equiv. tokens)** | **9.65M** | **0.52M** | **−95%** |
+| Executor tokens (Gemini/Codex quota) | — | 1.24M | |
+
+> Two different videos of the same kind, not a controlled experiment. The CC-alone run also happened inside a long session, which inflates its context — that is exactly the cost this workflow is designed to avoid.
+
+**Per project — how much of the token load moved off CC:**
+
+| Project | Dispatches | Executor tokens | CC calls | CC equiv. tokens | Executors' share | CC equiv. per dispatch |
+|---|---:|---:|---:|---:|---:|---:|
+| A · Android app (several iterations) | 15 | 8.63M | 187 | 6.67M | 56% | 444k |
+| B · Android VPN app (first collab project) | 6 | 1.35M | 139 | 3.11M | 30% | 519k |
+| C · Framework tooling | 5 | 2.77M | 30 | 0.59M | 82% | 119k |
+| D · Short video | 2 | 1.24M | 31 | 0.52M | 70% | 260k |
+| E · App | 6 | 5.11M | 37 | 1.37M | 79% | 228k |
+| **Total** | **34** | **19.1M** | **424** | **12.3M** | **61%** | **361k** |
+
+**Executors** (all runs, including framework self-tests):
+
+| Executor | Runs | Avg tokens / run | Avg time | Passed final review |
+|---|---:|---:|---:|---:|
+| Gemini | 38 | 503k | 19.9 min | 76% (25 / 33 reviewed) |
+| Codex | 16 | 100k | 10.2 min | 86% (12 / 14 reviewed) |
+
+**What the data taught us (and the rules that came out of it):**
+- **Context length is the real cost.** In project A, later iterations ran in an ever-growing session: average context rose from 120k to 371k and CC's cost per call from 18.7k to 71.5k equiv. tokens. Hence the rule "one fresh session per collab project".
+- **The earlier projects did most work in CC.** Project B, the first one, ran inside a long session with 139 CC calls, and executors carried only 30% of the tokens. Once tasks came with detailed specs and acceptance tests (C, D, E), executors carried 70–82% of the tokens and CC's cost per dispatch fell to 119k–260k.
+- **Gemini is verbose, Codex is lean.** Gemini uses ~5× the tokens per run, but its quota is the largest, so it gets most code; Codex gets debugging, integration and reviews.
+- **The executor environment matters.** Injecting a dedicated `AGENTS.md` instead of the user's personal skill list cut executor tokens per run from 189k to 127k (−33%) in an A/B test; the lean Codex config cut Codex's baseline tokens from 5.2k to 4.1k.
 
 ![Ledger page: pass rate and tokens per executor, CC vs executor spend per project, token trends](docs/images/ledger-en.png)
 

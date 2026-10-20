@@ -1,5 +1,13 @@
 # collab：Claude Code 主控的三方协同框架（CC + Gemini + Codex）
 
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+![Platform: Windows](https://img.shields.io/badge/platform-Windows-0078D6)
+![PowerShell 7+](https://img.shields.io/badge/PowerShell-7%2B-5391FE)
+![Claude Code skill](https://img.shields.io/badge/Claude%20Code-skill-D97757)
+![Languages: English | 中文](https://img.shields.io/badge/lang-English%20%7C%20%E4%B8%AD%E6%96%87-555)
+[![GitHub stars](https://img.shields.io/github/stars/azakmo/collab-skill?style=flat)](https://github.com/azakmo/collab-skill/stargazers)
+[![Last commit](https://img.shields.io/github/last-commit/azakmo/collab-skill)](https://github.com/azakmo/collab-skill/commits/main)
+
 [English](README.md) | **简体中文**
 
 > 语言：支持英文（默认）和简体中文。技能、任务/回报模板、执行者守则和脚本生成的文字都有两套。在 `roster.json` 里设 `"language": "zh-CN"`（或环境变量 `COLLAB_LANG=zh-CN`）切换成中文。不论设置如何，中英文写的任务文件都能解析。
@@ -12,6 +20,46 @@
 - 每次派活自动记账（token、用时、通过率），下次按数据选执行者。
 
 > 平台：Windows + PowerShell 7（pwsh）。执行者通过 [Codex CLI](https://github.com/openai/codex) 运行。
+
+## 实际效果
+
+以下数据来自作者自己的账本（2026 年 10 月，5 个真实项目，共派活 34 次），已去敏。CC 的花销由 `cc-usage.ps1` 从 Claude Code 会话记录统计，按价格折算成**等效 token**（输入 + 缓存写入×1.25 + 缓存读取×0.1 + 输出×5）；执行者的 token 是 Codex CLI 报告的总量。
+
+**同类任务：CC 单干 vs 协同**（一个短宣传视频，用代码渲染流水线制作）：
+
+| | CC 单干 | 协同 | 变化 |
+|---|---:|---:|---:|
+| CC 调用次数 | 176 | 31 | −82% |
+| CC 平均上下文 | 约 44 万 | 约 10.4 万 | −76% |
+| CC 每次调用花销（等效） | 5.48 万 | 1.68 万 | −69% |
+| **CC 总花销（等效 token）** | **965 万** | **52 万** | **−95%** |
+| 执行者 token（用 Gemini/Codex 的额度） | — | 124 万 | |
+
+> 两个是同类型但不同的视频，不是严格对照实验。CC 单干那次是在一个很长的会话里做的，上下文本来就大——而这正是本框架要避免的开销。
+
+**按项目：有多少 token 从 CC 转到了执行者身上：**
+
+| 项目 | 派活次数 | 执行者 token | CC 调用次数 | CC 等效 token | 执行者占比 | 每次派活的 CC 花销 |
+|---|---:|---:|---:|---:|---:|---:|
+| A · 安卓 App（多轮迭代） | 15 | 863 万 | 187 | 667 万 | 56% | 44.4 万 |
+| B · 安卓 VPN App（第一个协同项目） | 6 | 135 万 | 139 | 311 万 | 30% | 51.9 万 |
+| C · 框架自身的工具 | 5 | 277 万 | 30 | 59 万 | 82% | 11.9 万 |
+| D · 短视频 | 2 | 124 万 | 31 | 52 万 | 70% | 26.0 万 |
+| E · App | 6 | 511 万 | 37 | 137 万 | 79% | 22.8 万 |
+| **合计** | **34** | **1909 万** | **424** | **1226 万** | **61%** | **36.1 万** |
+
+**执行者表现**（所有派活，含框架自测）：
+
+| 执行者 | 次数 | 平均每次 token | 平均用时 | 终审通过率 |
+|---|---:|---:|---:|---:|
+| Gemini | 38 | 50.3 万 | 19.9 分 | 76%（审了 33 次，过 25 次） |
+| Codex | 16 | 10.0 万 | 10.2 分 | 86%（审了 14 次，过 12 次） |
+
+**从数据里得到的结论（以及由此定下的规则）：**
+- **上下文长度才是大头。** 项目 A 后几轮一直在同一个越来越长的会话里做：平均上下文从 12 万涨到 37 万，CC 每次调用的花销从 1.87 万涨到 7.15 万等效 token。所以定了「每个协同项目开一个新会话」。
+- **早期项目大部分活还是 CC 在做。** 第一个项目 B 在长会话里做，CC 调用了 139 次，执行者只承担了 30% 的 token。之后任务都带上详细规格和验收测试（C、D、E），执行者承担了 70–82%，每次派活的 CC 花销降到 11.9–26 万。
+- **Gemini 啰嗦，Codex 精简。** Gemini 每次用的 token 约是 Codex 的 5 倍，但它额度最多，所以大部分代码给它；排查、集成和审查给 Codex。
+- **执行者环境很重要。** 给执行者注入专用的 `AGENTS.md`、不带用户的个人技能列表，A/B 实测每次派活从 18.9 万降到 12.7 万 token（−33%）；Codex 精简配置把基础 token 从 5.2k 降到 4.1k。
 
 ![账本页面：各执行者的通过率和 token、各项目 CC 与执行者的花销、token 趋势](docs/images/ledger-zh-CN.png)
 
