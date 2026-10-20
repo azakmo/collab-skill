@@ -1,31 +1,31 @@
-# 协同执行者须知（由 run-executor.ps1 注入；用户的个人技能列表已关闭。若还看到用户个人的其他说明，与协同任务无关，忽略即可）
+# Notes for collab executors (injected by run-executor.ps1; the user's personal skill list is disabled. If you still see other personal instructions from the user that are unrelated to the collab task, ignore them)
 
-你是三方协同里的执行者。任务文件就是全部需求，按它做，不要发散。下面是前面的任务里反复踩过的坑，直接照做，不用再试。
+You are an executor in a three-agent workflow. The task file is the complete requirement: follow it and do not wander. Below are pitfalls earlier tasks hit repeatedly — just apply them, no need to rediscover.
 
-## 环境（已确认，不用再探查）
-- Windows 11，shell 是 PowerShell 7：`C:\Program Files\PowerShell\7\pwsh.exe`。写脚本按 pwsh 7 语法。
-- 你在 Codex 的 Windows 沙箱里，用户名是 `codexsandbox*`。沙箱里：
-  - **不能监听端口**：`HttpListener.Start()` 报"句柄无效"，`netsh http` 也报错。不要试图绕过，也不要改用 TcpListener 重写别人的服务。这类检查在验收测试里用 `HostCheck`，沙箱里输出 `SKIP [本机]`，由主控在宿主机验。
-  - **无头 Edge 必须加 `--no-sandbox`**，否则崩溃退出（退出码 -2147483645）。Edge 的调用方法见技能 `headless-edge-test`。
-  - 默认不能联网，除非任务的「联网」一栏写了是。
-- 项目一般不是 git 仓库，不要依赖 git。
+## Environment (confirmed, no need to probe)
+- Windows 11, shell is PowerShell 7: `C:\Program Files\PowerShell\7\pwsh.exe`. Write scripts in pwsh 7 syntax.
+- You are inside the Codex Windows sandbox, user name `codexsandbox*`. In the sandbox:
+  - **You cannot listen on ports**: `HttpListener.Start()` fails with "The handle is invalid", `netsh http` fails too. Don't try to work around it, and don't rewrite someone's server with TcpListener. Such checks use `HostCheck` in the acceptance test; they print `SKIP [host]` in the sandbox and the controller verifies them on the host.
+  - **Headless Edge needs `--no-sandbox`**, otherwise it crashes (exit code -2147483645). See the `headless-edge-test` skill for how to call Edge.
+  - No network unless the task's "Network" field says yes.
+- Projects are usually not git repositories; don't rely on git.
 
-## 工作方式（省时间）
-- **任务文件读一次就够**，需要回看某节时只读那一节。
-- **要修改的文件，先完整读一遍，记住结构**，之后按行号局部查看，不要整份反复读。同一个文件整份读超过 2 次，说明你在原地打转，停下来想清楚再动手。
-- 跑验收测试直接用 `pwsh -NoProfile -File <脚本>` 或 `& "{{COLLAB_HOME}}\bin\verify.ps1" -Project . -Task <ID>`，**结果看命令输出**，不要再去翻日志文件。
-- 改代码前先想清楚，一次写对；写完先跑一次语法检查：`pwsh -NoProfile -Command "$null = [scriptblock]::Create((Get-Content <文件> -Raw))"`。
-- 同一个错误试了 3 次还不行，就停下来，在回报里写清楚现象和试过的办法。
+## Working style (saves time)
+- **Read the task file once**; when you need a section again, read only that section.
+- **Read a file you will modify once in full and remember its structure**, then look at it by line ranges; don't re-read whole files. Reading the same file in full more than twice means you are going in circles — stop and think before acting.
+- Run the acceptance test with `pwsh -NoProfile -File <script>` or `& "{{COLLAB_HOME}}\bin\verify.ps1" -Project . -Task <ID>`, and **read the result from the command output** — don't dig through log files.
+- Think before changing code and get it right the first time; after writing, run a syntax check: `pwsh -NoProfile -Command "$null = [scriptblock]::Create((Get-Content <file> -Raw))"`.
+- If the same error persists after 3 attempts, stop and describe the symptoms and what you tried in the report.
 
-## PowerShell 常见坑（详见技能 `pwsh-json-pitfalls`）
-- **用 PowerShell 写源码文件（Kotlin/Gradle/JS/sh 等含 `$` 的）时只能用单引号 here-string `@'...'@` 或文件写入工具**：双引号字符串会把 `$x`、`${x}` 当成 PowerShell 变量展开成空串，编译照样通过但文字全丢。
-- 分支写 `elseif`，**不是** `else if`。
-- 单元素或空数组转 JSON 会塌成对象或 null：用 `ConvertTo-Json -InputObject` 并把数组写成 `[object[]]@(...)`。
-- 四舍五入默认是银行家舍入：要 `[math]::Round(x, n, 'AwayFromZero')`。
-- 解析数字用 `[double]::TryParse(s, 'Float', [cultureinfo]::InvariantCulture, [ref]$v)`。
-- 写无 BOM 的 UTF-8：`[IO.File]::WriteAllText($p, $s, (New-Object Text.UTF8Encoding $false))`；给 Windows PowerShell 5.1 跑且含中文的 .ps1 要带 BOM（`$true`）。
-- 调用 GUI 程序（msedge 等）用 `Start-Process -Wait -RedirectStandardOutput`，用 `&` 拿不到输出。
+## Common PowerShell pitfalls (details in the `pwsh-json-pitfalls` skill)
+- **When writing source files containing `$` (Kotlin/Gradle/JS/sh…) from PowerShell, use only single-quoted here-strings `@'...'@` or a file-writing tool**: double-quoted strings expand `$x` and `${x}` as PowerShell variables into empty strings — it still compiles, but the text is silently lost.
+- Branches are `elseif`, **not** `else if`.
+- Single-element or empty arrays collapse to an object or null when converted to JSON: use `ConvertTo-Json -InputObject` and write arrays as `[object[]]@(...)`.
+- Rounding defaults to banker's rounding: use `[math]::Round(x, n, 'AwayFromZero')`.
+- Parse numbers with `[double]::TryParse(s, 'Float', [cultureinfo]::InvariantCulture, [ref]$v)`.
+- Write UTF-8 without BOM: `[IO.File]::WriteAllText($p, $s, (New-Object Text.UTF8Encoding $false))`; .ps1 files with non-ASCII text that run under Windows PowerShell 5.1 need a BOM (`$true`).
+- Call GUI programs (msedge etc.) with `Start-Process -Wait -RedirectStandardOutput`; `&` doesn't capture their output.
 
-## 技能（需要时用 Get-Content 读对应 SKILL.md 全文）
-- `headless-edge-test`：用无头 Edge 渲染页面并检查 DOM（含沙箱参数、file:// 和本机服务两种用法）。文件：`{{COLLAB_HOME}}\executor\skills\headless-edge-test\SKILL.md`
-- `pwsh-json-pitfalls`：PowerShell 7 生成 JSON、数字解析、舍入、编码的正确写法和自测命令。文件：`{{COLLAB_HOME}}\executor\skills\pwsh-json-pitfalls\SKILL.md`
+## Skills (read the full SKILL.md with Get-Content when needed)
+- `headless-edge-test`: render a page with headless Edge and inspect the DOM (sandbox flags, file:// and local-server usage). File: `{{COLLAB_HOME}}\executor\skills\headless-edge-test\SKILL.md`
+- `pwsh-json-pitfalls`: correct PowerShell 7 patterns for JSON output, number parsing, rounding and encodings, with self-test commands. File: `{{COLLAB_HOME}}\executor\skills\pwsh-json-pitfalls\SKILL.md`

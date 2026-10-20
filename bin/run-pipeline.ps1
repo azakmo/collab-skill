@@ -16,7 +16,7 @@ if (-not (Test-Path $taskFile)) { throw "task file not found: $taskFile" }
 # Settings come from the task file itself, so CC writes them once there.
 $first = ((Get-TaskField $taskFile '执行者') -split '[\s|（(,，]')[0].ToLower()
 $timeout = [int](((Get-TaskField $taskFile '时限') -replace '[^\d].*$', '') -as [int]); if (-not $timeout) { $timeout = 30 }
-$net = (Get-TaskField $taskFile '联网') -like '是*'
+$net = (Get-TaskField $taskFile '联网') -match '^(是|yes)'
 $tc = if ((Get-TaskField $taskFile '工具链') -match '^(android)') { $Matches[1] } else { '' }
 
 $roster = Get-Roster
@@ -34,7 +34,8 @@ function Add-TaskNote([string]$text) {
 $attempts = @(); $result = 'NEEDS_CC'; $prev = $null
 :outer foreach ($ex in $chain) {
     if ($prev) {
-        Add-TaskNote "## 换人（主控流水线自动追加）`n前一位执行者 $prev 返工 $MaxRework 轮后验收测试仍未通过，现在由你（$ex）接手。先读现有产物和 collab/reports/$Task.md，再修复，直到验收测试全部通过。"
+        Add-TaskNote (L "## Handover (appended by the controller pipeline)`nThe previous executor $prev still failed the acceptance test after $MaxRework rework rounds; you ($ex) are taking over. First read the existing output and collab/reports/$Task.md, then fix it until the acceptance test passes completely." `
+            "## 换人（主控流水线自动追加）`n前一位执行者 $prev 返工 $MaxRework 轮后验收测试仍未通过，现在由你（$ex）接手。先读现有产物和 collab/reports/$Task.md，再修复，直到验收测试全部通过。")
     }
     for ($round = 0; $round -le $MaxRework; $round++) {
         & (Join-Path $PSScriptRoot 'run-executor.ps1') -Executor $ex -Project $Project -Task $Task -TimeoutMin $timeout `
@@ -43,7 +44,8 @@ $attempts = @(); $result = 'NEEDS_CC'; $prev = $null
         if ($rc -ne 0) {
             $attempts += [pscustomobject]@{ executor = $ex; round = $round; rc = $rc; verify = 'skipped' }
             try { & (Join-Path $PSScriptRoot 'ledger-mark.ps1') -Project $Project -Task $Task -Review 失败 -Note "pipeline rc=$rc" | Out-Null } catch {}
-            Add-TaskNote "## 返工 第 $($round + 1) 轮（主控流水线自动追加）`n上一轮执行异常结束（退出码 $rc：2=没写回报，3=超时）。请在时限内完成，并务必写回报。"
+            Add-TaskNote (L "## Rework round $($round + 1) (appended by the controller pipeline)`nThe previous run ended abnormally (exit code ${rc}: 2 = no report written, 3 = timed out). Finish within the timeout and be sure to write the report." `
+                "## 返工 第 $($round + 1) 轮（主控流水线自动追加）`n上一轮执行异常结束（退出码 $rc：2=没写回报，3=超时）。请在时限内完成，并务必写回报。")
             continue
         }
         $vout = @(& (Join-Path $PSScriptRoot 'verify.ps1') -Project $Project -Task $Task -Mark 2>&1 | ForEach-Object { "$_" })
@@ -54,7 +56,9 @@ $attempts = @(); $result = 'NEEDS_CC'; $prev = $null
         if ($vrc -eq 0) { $result = 'PASS'; break outer }
         $fails = ($vout | Where-Object { $_ -match '^(FAIL|TIMEOUT|---|\s)' }) -join "`n"
         if ($round -lt $MaxRework) {
-            Add-TaskNote "## 返工 第 $($round + 1) 轮（主控流水线自动追加）`n上一轮验收测试没通过，失败项：`n``````text`n$fails`n```````n修复后重新跑「验收测试」直到全部 PASS，并更新回报。不要修改验收测试。"
+            $block = "``````text`n$fails`n``````"
+            Add-TaskNote (L "## Rework round $($round + 1) (appended by the controller pipeline)`nThe acceptance test did not pass last round. Failures:`n$block`nFix them, re-run the acceptance test until everything PASSes, and update the report. Do not modify the acceptance test." `
+                "## 返工 第 $($round + 1) 轮（主控流水线自动追加）`n上一轮验收测试没通过，失败项：`n$block`n修复后重新跑「验收测试」直到全部 PASS，并更新回报。不要修改验收测试。")
         }
     }
     $prev = $ex

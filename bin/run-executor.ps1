@@ -34,7 +34,7 @@ if ($sel.Executor.clean_config -ne $false) { $argList += @('--ignore-user-config
 # roster: "collab_env": false to opt out.
 if ($sel.Executor.collab_env -ne $false) {
     $argList += @('-c', 'skills.include_instructions=false')
-    $notes = Join-Path $PSScriptRoot '..\executor\AGENTS.md'
+    $notes = Join-Path $PSScriptRoot "..\executor\$(L 'AGENTS.md' 'AGENTS.zh-CN.md')"
     if (Test-Path $notes) {
         $t = ((Get-Content $notes -Raw -Encoding utf8) -replace "`r`n", "`n").Replace('{{COLLAB_HOME}}', $script:CollabHome)
         if ($t -match "'''") { throw "$notes must not contain ''' (it is passed as a TOML literal string)" }

@@ -53,6 +53,19 @@ if (-not (Test-Path $script:RosterPath)) { Copy-Item (Join-Path $PSScriptRoot '.
 
 function Get-Roster { Get-Content $script:RosterPath -Raw -Encoding utf8 | ConvertFrom-Json }
 
+# Language of templates, executor notes and generated text: $env:COLLAB_LANG, else roster "language", else 'en'.
+# Supported: 'en', 'zh-CN'. Task files in either language are parsed regardless of this setting.
+function Get-CollabLang {
+    $l = $env:COLLAB_LANG
+    if (-not $l) { try { $l = (Get-Roster).language } catch {} }
+    if ($l -in 'en', 'zh-CN') { $l } else { 'en' }
+}
+
+function Get-TemplateDir { Join-Path $PSScriptRoot "..\templates\$(Get-CollabLang)" }
+
+# Pick the text for the current language: L 'English' '中文'
+function L([string]$En, [string]$Zh) { if ((Get-CollabLang) -eq 'zh-CN') { $Zh } else { $En } }
+
 # Whitelist gate: the executor must be enabled and the model must be in its enabled_models.
 function Resolve-Executor([string]$Id, [string]$Model) {
     $r = Get-Roster
@@ -93,7 +106,8 @@ function Resolve-CollabTask([string]$Project, [string]$Task) {
     if (-not (Test-Path $taskFile)) { throw "task file not found: $taskFile" }
     New-Item -ItemType Directory -Force (Join-Path $collab 'logs'), (Join-Path $collab 'reports'), (Join-Path $collab '_templates') | Out-Null
     # Keep the project's template copies current, so old projects pick up new template sections.
-    Copy-Item (Join-Path $PSScriptRoot '..\templates\task.md'), (Join-Path $PSScriptRoot '..\templates\report.md') (Join-Path $collab '_templates') -Force
+    $tpl = Get-TemplateDir
+    Copy-Item (Join-Path $tpl 'task.md'), (Join-Path $tpl 'report.md') (Join-Path $collab '_templates') -Force
     [pscustomobject]@{
         Project = $Project
         Collab  = $collab
@@ -107,7 +121,7 @@ function Get-ExecutorPrompt([string]$Task) {
     "You are an executor in a multi-agent workflow coordinated by Claude Code. " +
     "Read the task file collab/tasks/$Task.md (relative to the current working directory) and carry it out exactly, " +
     "obeying its executor rules section. When you finish, or if you get blocked, write your report to " +
-    "collab/reports/$Task.md following the template collab/_templates/report.md. Write the report in Chinese and be honest: " +
+    "collab/reports/$Task.md following the template collab/_templates/report.md. Write the report in $(L 'English' 'Chinese') and be honest: " +
     "anything you did not verify must be marked as not verified."
 }
 
@@ -120,9 +134,16 @@ function ConvertTo-ArgString([string[]]$ArgList) {
 $script:LedgerPath = Join-Path $PSScriptRoot '..\ledger.csv'
 $script:LedgerColumns = 'time', 'project', 'task', 'type', 'executor', 'model', 'flags', 'exit', 'minutes', 'tokens', 'self_status', 'review', 'note'
 
+# Task/report fields are written as "- 执行者：x" (zh-CN) or "- Executor: x" (en); both are accepted.
+$script:FieldAliases = @{
+    '执行者' = 'Executor'; '类型' = 'Type'; '时限' = 'Timeout'; '联网' = 'Network'; '工具链' = 'Toolchain'
+    '难度' = 'Difficulty'; '升级路径' = 'Escalation'; '状态' = 'Status'
+}
+
 function Get-TaskField([string]$File, [string]$Field) {
     if (-not (Test-Path $File)) { return '' }
-    $m = Select-String -Path $File -Pattern "^- $Field[：:]\s*(.+)$" -Encoding utf8 | Select-Object -First 1
+    $names = @($Field) + @($script:FieldAliases[$Field] | Where-Object { $_ })
+    $m = Select-String -Path $File -Pattern "^- (?:$($names -join '|'))\s*[：:]\s*(.+)$" -Encoding utf8 | Select-Object -First 1
     if ($m) { $m.Matches[0].Groups[1].Value.Trim() } else { '' }
 }
 

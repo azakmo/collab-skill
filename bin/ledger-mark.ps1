@@ -1,13 +1,15 @@
 # Record CC's final-review verdict for a task in <collab>\ledger.csv (latest row of that project+task).
-#   & "$env:COLLAB_HOME\bin\ledger-mark.ps1" -Project C:\work\my-project -Task T002 -Review 返工 -Note '校验缺失，转 Codex'
+#   & "$env:COLLAB_HOME\bin\ledger-mark.ps1" -Project C:\work\my-project -Task T002 -Review rework -Note 'validation missing, moved to Codex'
+# -Review: pass | rework | failed | cancelled (or 通过 | 返工 | 失败 | 取消). Stored in the ledger as the Chinese value.
 param(
     [Parameter(Mandatory)][string]$Project,
     [Parameter(Mandatory)][string]$Task,
-    [Parameter(Mandatory)][ValidateSet('通过', '返工', '失败', '取消')][string]$Review,
+    [Parameter(Mandatory)][ValidateSet('pass', 'rework', 'failed', 'cancelled', '通过', '返工', '失败', '取消')][string]$Review,
     [string]$Note = ''
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'tools.ps1')
+$Review = @{ pass = '通过'; rework = '返工'; failed = '失败'; cancelled = '取消' }[$Review] ?? $Review
 
 $Project = (Resolve-Path $Project).Path
 $rows = @(Import-Csv $script:LedgerPath -Encoding utf8)

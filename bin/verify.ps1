@@ -11,8 +11,8 @@ $ErrorActionPreference = 'Stop'
 $Project = (Resolve-Path $Project).Path
 $taskFile = Join-Path $Project "collab\tasks\$Task.md"
 $md = Get-Content $taskFile -Raw -Encoding utf8
-$m = [regex]::Match($md, '(?s)## 验收测试.*?```powershell\r?\n(.*?)\r?\n```')
-if (-not $m.Success) { "no 验收测试 block in $taskFile"; exit 4 }
+$m = [regex]::Match($md, '(?s)## (?:验收测试|Acceptance test)\b.*?```powershell\r?\n(.*?)\r?\n```')
+if (-not $m.Success) { "no 验收测试 / Acceptance test block in $taskFile"; exit 4 }
 
 $script = Join-Path $Project "collab\logs\$Task.verify.ps1"
 New-Item -ItemType Directory -Force (Split-Path $script) | Out-Null

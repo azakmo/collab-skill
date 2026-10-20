@@ -1,23 +1,24 @@
 {
   "version": 1,
+  "language": "en",
   "controller": {
     "name": "Claude Code",
-    "note": "第一层固定是 CC：拆任务、写规格和验收测试、决策、终审。CC 自己用什么模型在 Claude Code 里选，名册管不到。"
+    "note": "Layer 1 is always CC: splits tasks, writes specs and acceptance tests, decides, does the final review. CC's own model is chosen in Claude Code, not here."
   },
   "layers": {
-    "impl": "实现 / 初审：难的排查、集成、审查苦力层的成果",
-    "labor": "苦力：规格写清楚的代码、批量修改、编译、读资料"
+    "impl": "Implement / review: hard debugging, integration, reviewing the labor layer's work",
+    "labor": "Labor: clearly specified code, bulk edits, builds, reading material"
   },
   "providers": [
     {
       "id": "openai",
-      "name": "Codex 自带（ChatGPT 账号登录）",
+      "name": "Codex built-in (ChatGPT sign-in)",
       "kind": "codex-builtin",
       "probe": "codex-cache"
     },
     {
       "id": "agt",
-      "name": "OpenAI 兼容反代（示例：本机 Gemini 反代）",
+      "name": "OpenAI-compatible proxy (example: local Gemini proxy)",
       "kind": "openai-compatible",
       "base_url": "http://127.0.0.1:8045/v1",
       "env_key": "AGT_API_KEY",
@@ -33,12 +34,12 @@
       "layer": "impl",
       "enabled": true,
       "tier": 3,
-      "cost": "中：适度用",
+      "cost": "medium: use moderately",
       "default_model": "gpt-5-codex",
       "enabled_models": [
         "gpt-5-codex"
       ],
-      "notes": "擅长难的排查、集成和审查；token 用量少",
+      "notes": "good at hard debugging, integration and review; low token use",
       "clean_config": true,
       "reasoning": "high"
     },
@@ -49,12 +50,12 @@
       "layer": "labor",
       "enabled": true,
       "tier": 2,
-      "cost": "低：额度最多",
+      "cost": "low: largest quota",
       "default_model": "gemini-2.5-pro",
       "enabled_models": [
         "gemini-2.5-pro"
       ],
-      "notes": "规格写清楚的实现、批量修改、读资料；比较啰嗦，token 用量是 Codex 的好几倍；反代偶尔让对话失真",
+      "notes": "clearly specified implementations, bulk edits, reading; verbose, uses several times Codex's tokens; the proxy occasionally garbles conversations",
       "clean_config": true
     }
   ]

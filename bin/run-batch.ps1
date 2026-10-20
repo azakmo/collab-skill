@@ -43,7 +43,8 @@ $rows = foreach ($x in $procs) {
 $rows | Format-Table -AutoSize | Out-String -Width 160
 $bad = @($rows | Where-Object result -ne 'PASS')
 if ($bad) {
-    "需要主控处理：$(($bad | ForEach-Object { "$($_.task)=$($_.result)" }) -join ', ')"
-    "（PIPELINE 详情：collab/logs/<任务>.pipeline.json；崩溃看 collab/logs/<任务>.pipeline.err.log）"
+    $list = ($bad | ForEach-Object { "$($_.task)=$($_.result)" }) -join ', '
+    L "Needs the controller: $list" "需要主控处理：$list"
+    L "(pipeline details: collab/logs/<task>.pipeline.json; crashes: collab/logs/<task>.pipeline.err.log)" "（PIPELINE 详情：collab/logs/<任务>.pipeline.json；崩溃看 collab/logs/<任务>.pipeline.err.log）"
 }
 exit $bad.Count

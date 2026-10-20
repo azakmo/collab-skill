@@ -11,7 +11,7 @@ Let Claude Code (CC) do only the thinking — planning, writing specs, reviewing
 
 > Platform: Windows + PowerShell 7 (pwsh). Executors run through the [Codex CLI](https://github.com/openai/codex).
 >
-> **Language note:** the task templates, executor rules and script output are in Chinese. Field names in task files (e.g. `执行者`, `时限`, `联网`, `升级路径`, `## 验收测试`) are parsed by the scripts — keep them as-is. The content you write in the fields can be in any language. The skill is triggered by saying 「请协同处理」 ("please handle this collaboratively"); you can edit the `description` in `skill/collab/SKILL.md` to add an English trigger phrase.
+> **Languages:** English (default) and Simplified Chinese. The skill, task/report templates, executor instructions and generated text all come in both. Choose with `"language": "en" | "zh-CN"` in `roster.json` (or the `COLLAB_LANG` environment variable). Task files written in either language are parsed regardless of the setting.
 
 ## Install
 
@@ -20,18 +20,18 @@ Let Claude Code (CC) do only the thinking — planning, writing specs, reviewing
    git clone https://github.com/azakmo/collab-skill C:\collab
    [Environment]::SetEnvironmentVariable('COLLAB_HOME', 'C:\collab', 'User')
    ```
-2. Install the skill into Claude Code:
+2. Install the skill into Claude Code (English; use `skill\zh-CN\collab` for Chinese):
    ```powershell
-   Copy-Item -Recurse C:\collab\skill\collab "$env:USERPROFILE\.claude\skills\"
+   Copy-Item -Recurse C:\collab\skill\en\collab "$env:USERPROFILE\.claude\skills\"
    ```
 3. Install and sign in to the Codex CLI (`codex` on PATH, or the Codex desktop app installed).
-4. Configure the roster: on first run `roster.example.json` is copied to `roster.json`. Open the console, click "探测模型" (probe models) and tick the models you actually have (the model names in the example are placeholders):
+4. Configure the roster: on first run `roster.example.json` is copied to `roster.json`. Open the console (Chinese UI), click "探测模型" (probe models) and tick the models you actually have (the model names in the example are placeholders):
    ```powershell
    pwsh -File "$env:COLLAB_HOME\console\console.ps1"
    ```
 5. If you use an OpenAI-compatible endpoint (e.g. a local Gemini proxy) as an executor: put the key in a **user environment variable** and write only the variable name in the roster provider (the example uses `AGT_API_KEY`). The endpoint must support the `responses` wire format (required by the Codex harness).
 
-Then tell Claude Code **「请协同处理」** to use the workflow; otherwise CC does the work itself.
+Then tell Claude Code **"collab mode"** / **"please collaborate"** (or 「请协同处理」) to use the workflow; otherwise CC does the work itself.
 
 ## Roles
 
@@ -50,8 +50,10 @@ Review chain: executor self-check (runs the test) → `verify.ps1` → Codex rev
 ```
 $COLLAB_HOME\
   README.md            this file (README.zh-CN.md: Chinese)
-  skill\collab\        Claude Code skill (copy to ~/.claude/skills/)
-  templates\           task / report / board templates
+  skill\en\collab\     Claude Code skill, English (copy to ~/.claude/skills/)
+  skill\zh-CN\collab\  Claude Code skill, Chinese
+  templates\en\        task / report / board templates (English)
+  templates\zh-CN\     same, Chinese
   bin\
     init-collab.ps1    create collab\ inside a project
     run-executor.ps1   generic dispatcher (roster.json whitelist)
@@ -64,7 +66,7 @@ $COLLAB_HOME\
     ledger-mark.ps1    record CC's verdict in the ledger
     cc-usage.ps1       measure CC's own token spend
     tools.ps1          shared helpers (codex.exe lookup, whitelist, ledger, toolchains)
-  executor\            AGENTS.md + on-demand skills injected into executors
+  executor\            AGENTS.md (+ AGENTS.zh-CN.md) and on-demand skills injected into executors
   console\             web console (console.ps1 + console.html + ledger page)
   roster.example.json  roster example (roster.json is local, git-ignored)
   ledger.csv           ledger (local, git-ignored)
@@ -105,8 +107,8 @@ $COLLAB_HOME\
 
 ### Pipeline: auto-verify, rework, escalate (run-pipeline / run-batch)
 - `run-batch.ps1 -Project <dir> -Tasks T001,T002 [-MaxRework 2]`: runs tasks in parallel and prints one summary table at the end (result, who finished it, attempts, tokens, minutes).
-- Per task (`run-pipeline.ps1`): dispatch → run the acceptance test → on failure append the failing lines to the task file and send it back to the same executor (up to MaxRework rounds) → still failing: hand it to the next executor in `升级路径` (escalation path) → result in `collab/logs/<task>.pipeline.json`.
-- Settings are read from the task file: `执行者` (executor), `时限` (timeout), `联网` (network), `工具链` (toolchain), `升级路径` (escalation path).
+- Per task (`run-pipeline.ps1`): dispatch → run the acceptance test → on failure append the failing lines to the task file and send it back to the same executor (up to MaxRework rounds) → still failing: hand it to the next executor in `Escalation` → result in `collab/logs/<task>.pipeline.json`.
+- Settings are read from the task file fields: `Executor`, `Timeout`, `Network`, `Toolchain`, `Escalation` (or the Chinese `执行者`, `时限`, `联网`, `工具链`, `升级路径`).
 - Results: `PASS`; `NO_TEST` (no acceptance test, CC reviews manually); `NEEDS_CC` (the whole escalation path failed).
 - Executors run with a lean config (`--ignore-user-config`, no Codex plugins / MCP servers / hooks), measured at 20–30% fewer baseline tokens. Set `clean_config: false` in the roster to opt out; `reasoning` sets reasoning effort.
 - **Dedicated executor environment** (on by default, `collab_env: false` to opt out): `-c skills.include_instructions=false` hides your personal Codex skill list, and `-c developer_instructions` injects `executor\AGENTS.md` (with `{{COLLAB_HOME}}` replaced by the real path): sandbox limits, PowerShell pitfalls, working style, and on-demand skills under `executor\skills\*\SKILL.md`. Login and sandbox setup stay in your normal `CODEX_HOME`.
@@ -114,7 +116,7 @@ $COLLAB_HOME\
   - Add recurring generic pitfalls to `executor\AGENTS.md`; longer recipes go into `executor\skills\<name>\SKILL.md`, listed at the end of AGENTS.md. Keep it short.
 
 ### CC's own spend (cc-usage.ps1)
-- `& "$env:COLLAB_HOME\bin\cc-usage.ps1" -Since '<start time>' [-Record -Project <dir> -Task 'CC(全程)']`: reads Claude Code transcripts (`~/.claude/projects/*.jsonl`) and reports calls, average context, token types and a price-weighted equivalent (equiv); `-Record` adds it to the ledger as `executor=cc`.
+- `& "$env:COLLAB_HOME\bin\cc-usage.ps1" -Since '<start time>' [-Record -Project <dir> -Task 'CC(total)']`: reads Claude Code transcripts (`~/.claude/projects/*.jsonl`) and reports calls, average context, token types and a price-weighted equivalent (equiv); `-Record` adds it to the ledger as `executor=cc`.
 
 ### Console and roster (roster.json)
 - Start: `pwsh -File "$env:COLLAB_HOME\console\console.ps1"` → opens http://localhost:8790/ (localhost only, Ctrl+C to quit). `/ledger` shows ledger statistics.
@@ -122,11 +124,11 @@ $COLLAB_HOME\
 - Probe models: Codex built-in models come from `models_cache.json`; OpenAI-compatible endpoints from `/models`.
 - New provider: enter the URL and the **name of an environment variable** holding the key (the console never accepts or shows keys).
 - **The whitelist is enforced**: `run-executor.ps1` only allows enabled executors and ticked models; anything else fails before any call is made.
-- Capability tier 1–3: if a task's difficulty (`难度`) exceeds the executor's tier, the dispatcher prints a WARNING.
+- Capability tier 1–3: if a task's `Difficulty` exceeds the executor's tier, the dispatcher prints a WARNING.
 
 ### Acceptance tests (verify.ps1)
-- Every task file needs a `## 验收测试` section: a PowerShell block with one `Check` per criterion, exit code 0 when all pass. Executors must pass it before handing in and may not modify it.
-- Host-only checks (starting an HTTP server, opening a browser, listening on ports) use `HostCheck`: inside the executor sandbox they print `SKIP [本机]` and don't count as failures; the pipeline runs them on the host. The sandbox is detected by the user name `codexsandbox*`; if detection fails, `HostCheck` behaves like `Check`, so nothing is skipped silently.
+- Every task file needs an `## Acceptance test` (or `## 验收测试`) section: a PowerShell block with one `Check` per criterion, exit code 0 when all pass. Executors must pass it before handing in and may not modify it.
+- Host-only checks (starting an HTTP server, opening a browser, listening on ports) use `HostCheck`: inside the executor sandbox they print `SKIP [host]` and don't count as failures; the pipeline runs them on the host. The sandbox is detected by the user name `codexsandbox*`; if detection fails, `HostCheck` behaves like `Check`, so nothing is skipped silently.
 - Dry-run the test before dispatching (before the deliverable exists) and make sure every failure is "not written yet", not a broken test. Call GUI programs (msedge etc.) with `Start-Process -Wait -RedirectStandardOutput`, not `&`.
 - First step of the final review: `& "$env:COLLAB_HOME\bin\verify.ps1" -Project <dir> -Task T00n -Mark` — prints a few PASS/FAIL lines; `-Mark` records pass/rework in the ledger.
 
@@ -138,10 +140,10 @@ Creates a research task `collab\tasks\R<timestamp>.md`, sends it to an executor 
 
 ### Ledger (ledger.csv)
 - Each dispatch appends a row: time, project, task, type, executor, model, flags, exit code, minutes, tokens, self-reported status (UTF-8 with BOM, opens in Excel).
-- Record the verdict after review: `& "$env:COLLAB_HOME\bin\ledger-mark.ps1" -Project <dir> -Task T00n -Review 通过|返工|失败|取消 [-Note 'reason']` (pass / rework / failed / cancelled).
+- Record the verdict after review: `& "$env:COLLAB_HOME\bin\ledger-mark.ps1" -Project <dir> -Task T00n -Review pass|rework|failed|cancelled [-Note 'reason']`.
 
 ### Network and toolchains
-- `-Network`: allow network access inside the sandbox (dependencies, sources, builds). Off by default; enable per task and list the allowed official sources in the task's `联网` field.
+- `-Network`: allow network access inside the sandbox (dependencies, sources, builds). Off by default; enable per task and list the allowed official sources in the task's `Network` field.
 - `-Toolchain android`: sets env vars and PATH for JDK / Android SDK+NDK / Go / Gradle. **The paths in `$Toolchains` in `bin\tools.ps1` are examples — edit them for your machine**; add new toolchains there too.
 - `-AddDir <dir>`: extra writable directories (caches outside the project).
 - With network on, an executor can technically reach any address; only the task rules restrain it. Never delegate SSH, deploy or login work.

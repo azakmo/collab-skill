@@ -2,7 +2,7 @@
 
 [English](README.md) | **简体中文**
 
-> 注意：框架里的任务模板、执行者守则和脚本输出目前都是中文；字段名（如「执行者」「验收测试」）是脚本解析用的，不要翻译。
+> 语言：支持英文（默认）和简体中文。技能、任务/回报模板、执行者守则和脚本生成的文字都有两套。在 `roster.json` 里设 `"language": "zh-CN"`（或环境变量 `COLLAB_LANG=zh-CN`）切换成中文。不论设置如何，中英文写的任务文件都能解析。
 
 让 Claude Code（CC）只做"想清楚、写清楚、验收"，把写代码、批量修改、读资料交给更便宜的执行者（Gemini / Codex），从而大幅节省 CC 的额度。
 
@@ -20,9 +20,10 @@
    git clone https://github.com/azakmo/collab-skill C:\collab
    [Environment]::SetEnvironmentVariable('COLLAB_HOME', 'C:\collab', 'User')
    ```
-2. 把技能装进 Claude Code：
+2. 把中文版技能装进 Claude Code，并把语言切成中文：
    ```powershell
-   Copy-Item -Recurse C:\collab\skill\collab "$env:USERPROFILE\.claude\skills\"
+   Copy-Item -Recurse C:\collab\skill\zh-CN\collab "$env:USERPROFILE\.claude\skills\"
+   [Environment]::SetEnvironmentVariable('COLLAB_LANG', 'zh-CN', 'User')
    ```
 3. 安装并登录 Codex CLI（`codex` 在 PATH 里，或装了 Codex 桌面版）。
 4. 配置名册：首次运行会把 `roster.example.json` 复制成 `roster.json`。打开控制台，点「探测模型」后勾选实际可用的模型（示例里的模型名只是占位）：
@@ -50,8 +51,10 @@
 ```
 $COLLAB_HOME\
   README.md            本文件
-  skill\collab\        Claude Code 技能（复制到 ~/.claude/skills/）
-  templates\           任务、回报、看板模板
+  skill\zh-CN\collab\  Claude Code 技能，中文（复制到 ~/.claude/skills/）
+  skill\en\collab\     同上，英文
+  templates\zh-CN\     任务、回报、看板模板（中文）
+  templates\en\        同上，英文
   bin\
     init-collab.ps1    在某个项目里建 collab\ 目录
     run-executor.ps1   通用派活入口（按 roster.json 白名单）
@@ -64,7 +67,7 @@ $COLLAB_HOME\
     ledger-mark.ps1    记账本登记终审结论
     cc-usage.ps1       统计 CC 自己的 token 花销
     tools.ps1          公共函数（定位 codex.exe、白名单、记账、工具链）
-  executor\            注入给执行者的 AGENTS.md 和按需技能
+  executor\            注入给执行者的 AGENTS.zh-CN.md（英文 AGENTS.md）和按需技能
   console\             协同控制台（console.ps1 + console.html + 账本页面）
   roster.example.json  名册示例（roster.json 本地生成，不入库）
   ledger.csv           记账本（本地生成，不入库）
