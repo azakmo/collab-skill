@@ -1,16 +1,20 @@
 # One task, end to end, without waking CC: dispatch → verify → visual review → auto-rework (≤ MaxRework) → escalate
 # along the task's 「升级路径」 → write collab/logs/<Task>.pipeline.json. CC only reads the final result.
-#   & "$env:COLLAB_HOME\bin\run-pipeline.ps1" -Project <dir> -Task T00n [-MaxRework 2] [-MaxResume 2] [-ProviderWaitMin 15]
-# Result: PASS | NO_TEST (no 验收测试 block, CC must review) | NEEDS_CC (every executor in the chain failed)
+#   & "$env:COLLAB_HOME\bin\run-pipeline.ps1" -Project <dir> -Task T00n [-MaxRework 2] [-MaxResume 2] [-ProviderWaitMin 15] [-Quiet]
+# Result: PASS | NO_TEST (no acceptance test block, CC must review) | NEEDS_CC (every executor in the chain failed, a
+# dependency is not in its accepted state, or the executor changed existing files outside its allowed list)
 # Interruptions are not rework: a crash (exit code other than 0/2/3), a stall (4) or an unreachable provider waits for
 # the provider and resumes the same codex session (keeps its progress); a loop (5) restarts fresh instead. Up to
 # MaxResume times, without using up a rework round. Exit 2 (finished without a report) gets one report-only resume.
+# On PASS the task's files are recorded with hashes (handover manifest). A desktop notification reports the result
+# (-Quiet: run-batch sends one summary instead).
 param(
     [Parameter(Mandatory)][string]$Project,
     [Parameter(Mandatory)][string]$Task,
     [int]$MaxRework = 2,
     [int]$MaxResume = 2,
-    [int]$ProviderWaitMin = 15
+    [int]$ProviderWaitMin = 15,
+    [switch]$Quiet
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'tools.ps1')
@@ -36,18 +40,93 @@ function Add-TaskNote([string]$text) {
     [IO.File]::AppendAllText($taskFile, "`n$text`n", (New-Object Text.UTF8Encoding $false))
 }
 
-# One executor run. A runner that throws before starting (provider down, ...) counts as an interruption (-100).
+function Send-Notice([string]$title, [string]$message) {
+    & (Join-Path $PSScriptRoot 'notify.ps1') -Title $title -Message $message | Out-Host
+}
+
+$attempts = @(); $result = 'NEEDS_CC'; $prev = $null; $reason = ''
+$scope = [Collections.Generic.List[object]]::new()   # changes outside the allowed list, from every executor run
+$allowed = Get-AllowedPaths $taskFile
+$projName = Split-Path $Project -Leaf
+
+# Write pipeline.json, record the handover on PASS, notify, exit. Used for early stops too.
+function Complete-Pipeline {
+    $final = $attempts | Select-Object -Last 1
+    $bad = @($scope | Where-Object change -ne 'added' | Sort-Object path -Unique)
+    $stray = @($scope | Where-Object change -eq 'added' | Sort-Object path -Unique)
+    if ($result -eq 'PASS' -and $bad) {
+        $script:result = 'NEEDS_CC'
+        $script:reason = L "out of scope: the executor changed $($bad.Count) existing file(s) outside its allowed list, see out_of_scope" `
+            "越界修改：执行者改动了白名单以外的已有文件（$($bad.Count) 个），见 out_of_scope"
+    }
+    $handover = if ($result -eq 'PASS') { Save-TaskHandover $Project $Task $final.executor }
+    $out = [pscustomobject]@{
+        task = $Task; result = $result; reason = $reason; chain = $chain; attempts = $attempts
+        final_executor = $final.executor; report = "collab/reports/$Task.md"
+        contact_sheet = $(if (Test-Path (Join-Path $Project "collab\logs\$Task.contact.png")) { "collab/logs/$Task.contact.png" } else { $null })
+        out_of_scope = $bad; stray_files = $stray
+        handover = $(if ($handover) { "collab/logs/$Task.manifest.json ($(@($handover.files).Count) files)" } else { $null })
+    }
+    $json = Join-Path $Project "collab\logs\$Task.pipeline.json"
+    [IO.File]::WriteAllText($json, ($out | ConvertTo-Json -Depth 5), (New-Object Text.UTF8Encoding $false))
+    "PIPELINE $Task : $result (by $($final.executor), $(@($attempts).Count) attempt(s); chain $($chain -join '→'))"
+    if ($reason) { "  reason: $reason" }
+    if ($bad) { "  out of scope: " + (($bad | ForEach-Object { "$($_.change) $($_.path)" }) -join ', ') }
+    if ($stray) { "  stray new files (warning): " + (($stray | ForEach-Object path) -join ', ') }
+    if ($out.handover) { "  handover: $($out.handover)" }
+    if ($out.contact_sheet) { "  visual: $($final.visual)  contact sheet: $($out.contact_sheet)" }
+    if (-not $Quiet) {
+        $label = if ($result -eq 'PASS') { L 'passed' '通过' } elseif ($result -eq 'NO_TEST') { L 'no test, CC reviews' '无测试，待 CC 审' } else { L 'needs CC' '要 CC 处理' }
+        $msg = if ($reason) { $reason } else {
+            "$($final.executor) · $(@($attempts).Count) $(L 'attempt(s)' '次尝试')$(if ($stray) { ' · ' + (L "$($stray.Count) new file(s) outside the allowed list" "$($stray.Count) 个白名单外新文件") })"
+        }
+        Send-Notice "$projName · $Task $label" $msg
+    }
+    exit $(if ($result -eq 'PASS') { 0 } elseif ($result -eq 'NO_TEST') { 5 } else { 6 })
+}
+
+# Dependencies (task field 「依赖」 / "Depends on"): each must be accepted, and its files unchanged since.
+$depField = Get-TaskField $taskFile '依赖'
+$deps = if ($depField -notmatch '\{\{') { @([regex]::Matches($depField, '(?<![A-Za-z0-9])[A-Za-z]{1,3}\d{2,}(?![0-9])').Value | Select-Object -Unique) } else { @() }
+if ($deps) {
+    $depIssues = @(Test-Handover $Project $deps)
+    if ($depIssues) {
+        $reason = (L 'dependency not ready: ' '依赖未就绪：') + (($depIssues | ForEach-Object {
+            if ($_.change -eq 'not accepted') { L "$($_.task) has not passed" "$($_.task) 还没通过验收" }
+            else { L "$($_.path) was $($_.change) after $($_.task) passed" "$($_.path) 在 $($_.task) 验收后被$(@{ modified = '改动'; missing = '删除' }[$_.change])" }
+        }) -join (L '; ' '；'))
+        Complete-Pipeline
+    }
+}
+
+# One executor run, with a project snapshot before and after it for the scope check.
+# A runner that throws before starting (provider down, ...) counts as an interruption (-100).
 function Invoke-Run([string]$ex, [string]$resume, [string]$prompt) {
     $a = @{ Executor = $ex; Project = $Project; Task = $Task; TimeoutMin = $timeout; Network = $net; Toolchain = $tc }
     if ($resume) { $a.Resume = $resume; if ($prompt) { $a.ResumePrompt = $prompt } }
-    try { & (Join-Path $PSScriptRoot 'run-executor.ps1') @a | Out-Host; $LASTEXITCODE }
-    catch { Write-Host "  runner failed: $($_.Exception.Message)"; -100 }
+    $before = if ($allowed) { Get-ProjectSnapshot $Project }
+    $rc = try { & (Join-Path $PSScriptRoot 'run-executor.ps1') @a | Out-Host; $LASTEXITCODE }
+        catch { Write-Host "  runner failed: $($_.Exception.Message)"; -100 }
+    if ($before) {
+        $after = Get-ProjectSnapshot $Project
+        if ($after) {
+            foreach ($c in Compare-ProjectSnapshot $before $after) {
+                if (-not (Test-PathAllowed $c.path $allowed)) { $scope.Add([pscustomobject]@{ path = $c.path; change = $c.change; executor = $ex }) }
+            }
+        }
+    }
+    $rc
 }
 
 function Wait-Provider([string]$ex) {
     $deadline = (Get-Date).AddMinutes($ProviderWaitMin)
     while (-not (Test-ProviderHealthy $ex)) {
-        if ((Get-Date) -gt $deadline) { Write-Host "  provider of $ex still down after ${ProviderWaitMin}m"; return }
+        if ((Get-Date) -gt $deadline) {
+            Write-Host "  provider of $ex still down after ${ProviderWaitMin}m"
+            Send-Notice (L "$projName · ${Task}: the model service of $ex is unreachable" "$projName · $Task：$ex 的模型服务连不上") `
+                (L "Still down after $ProviderWaitMin min; the pipeline keeps treating it as an interruption. The proxy may need you." "等了 $ProviderWaitMin 分钟还没恢复，流水线继续按中断处理，可能需要你看一下反代")
+            return
+        }
         Write-Host "  [$(Get-Date -Format s)] provider of $ex not answering, waiting..."
         Start-Sleep -Seconds 30
     }
@@ -62,7 +141,6 @@ function Get-RoundSession([string]$ex, [datetime]$since) {
     if ($m) { $m.Matches[0].Groups[1].Value } else { '' }
 }
 
-$attempts = @(); $result = 'NEEDS_CC'; $prev = $null
 :outer foreach ($ex in $chain) {
     if ($prev) {
         Add-TaskNote (L "## Handover (appended by the controller pipeline)`nThe previous executor $prev still failed the acceptance test after $MaxRework rework rounds; you ($ex) are taking over. First read the existing output and collab/reports/$Task.md, then fix it until the acceptance test passes completely." `
@@ -135,14 +213,5 @@ $attempts = @(); $result = 'NEEDS_CC'; $prev = $null
     $prev = $ex
 }
 
-$final = $attempts | Select-Object -Last 1
-$out = [pscustomobject]@{
-    task = $Task; result = $result; chain = $chain; attempts = $attempts
-    final_executor = $final.executor; report = "collab/reports/$Task.md"
-    contact_sheet = $(if (Test-Path (Join-Path $Project "collab\logs\$Task.contact.png")) { "collab/logs/$Task.contact.png" } else { $null })
-}
-$json = Join-Path $Project "collab\logs\$Task.pipeline.json"
-[IO.File]::WriteAllText($json, ($out | ConvertTo-Json -Depth 5), (New-Object Text.UTF8Encoding $false))
-"PIPELINE $Task : $result (by $($final.executor), $(@($attempts).Count) attempt(s); chain $($chain -join '→'))"
-if ($out.contact_sheet) { "  visual: $($final.visual)  contact sheet: $($out.contact_sheet)" }
-exit $(if ($result -eq 'PASS') { 0 } elseif ($result -eq 'NO_TEST') { 5 } else { 6 })
+if ($result -eq 'NEEDS_CC' -and -not $reason) { $reason = L "the whole escalation path ($($chain -join '→')) failed" "整条升级路径（$($chain -join '→')）都没通过" }
+Complete-Pipeline

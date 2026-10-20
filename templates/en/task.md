@@ -5,6 +5,7 @@
 - Timeout: {{minutes}} minutes
 - Network: {{no | yes: only for downloading dependencies/sources, limited to {{official sources}}}}
 - Toolchain: {{none | android (Go/gomobile/JDK17/SDK/NDK/Gradle env vars preset)}}
+- Depends on: {{none | T001, T002 (these tasks must have passed, with their files unchanged since; otherwise the pipeline will not start)}}
 
 ## Assessment (filled in by the controller; executors can ignore)
 - Difficulty: {{1 mechanical/bulk | 2 clearly specified implementation | 3 hard debugging / cross-module / hard to specify}}

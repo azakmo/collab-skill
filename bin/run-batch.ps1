@@ -17,7 +17,7 @@ $pipeline = Join-Path $PSScriptRoot 'run-pipeline.ps1'
 
 $procs = foreach ($t in $Tasks) {
     Remove-Item (Join-Path $logs "$t.pipeline.json") -ErrorAction SilentlyContinue
-    $p = Start-Process pwsh -ArgumentList "-NoProfile -File `"$pipeline`" -Project `"$Project`" -Task $t -MaxRework $MaxRework" `
+    $p = Start-Process pwsh -ArgumentList "-NoProfile -File `"$pipeline`" -Project `"$Project`" -Task $t -MaxRework $MaxRework -Quiet" `
         -RedirectStandardOutput (Join-Path $logs "$t.pipeline.out.log") -RedirectStandardError (Join-Path $logs "$t.pipeline.err.log") `
         -NoNewWindow -PassThru
     $null = $p.Handle
@@ -48,4 +48,9 @@ if ($bad) {
     L "Needs the controller: $list" "需要主控处理：$list"
     L "(pipeline details: collab/logs/<task>.pipeline.json; crashes: collab/logs/<task>.pipeline.err.log)" "（PIPELINE 详情：collab/logs/<任务>.pipeline.json；崩溃看 collab/logs/<任务>.pipeline.err.log）"
 }
+# One desktop notification for the whole batch.
+$pass = @($rows | Where-Object result -eq 'PASS').Count
+$msg = (L "$pass passed" "$pass 通过") + $(if ($bad) { (L ', needs CC: ' '，要 CC 处理：') + (($bad | ForEach-Object { "$($_.task)=$($_.result)" }) -join ', ') } else { '' }) +
+    (L " · $([math]::Round(((Get-Date) - $start).TotalMinutes)) min" " · 用时 $([math]::Round(((Get-Date) - $start).TotalMinutes)) 分钟")
+& (Join-Path $PSScriptRoot 'notify.ps1') -Title (L "$(Split-Path $Project -Leaf): $($Tasks.Count) task(s) finished" "$(Split-Path $Project -Leaf)：$($Tasks.Count) 个任务跑完") -Message $msg | Out-Host
 exit $bad.Count

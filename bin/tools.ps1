@@ -212,7 +212,7 @@ $script:LedgerColumns = 'time', 'project', 'task', 'type', 'executor', 'model', 
 # Task/report fields are written as "- 执行者：x" (zh-CN) or "- Executor: x" (en); both are accepted.
 $script:FieldAliases = @{
     '执行者' = 'Executor'; '类型' = 'Type'; '时限' = 'Timeout'; '联网' = 'Network'; '工具链' = 'Toolchain'
-    '难度' = 'Difficulty'; '升级路径' = 'Escalation'; '状态' = 'Status'
+    '难度' = 'Difficulty'; '升级路径' = 'Escalation'; '状态' = 'Status'; '依赖' = 'Depends on'
 }
 
 function Get-TaskField([string]$File, [string]$Field) {
@@ -230,12 +230,17 @@ function Save-Ledger([object[]]$Rows) {
 # Read-modify-write of the ledger under a machine-wide lock: run-batch runs pipelines in parallel, and two unlocked
 # writers that import the CSV at the same time silently drop each other's rows. $Mutate gets the rows, returns new rows.
 function Update-Ledger([scriptblock]$Mutate) {
-    $mx = New-Object Threading.Mutex($false, 'Global\collab-ledger')
-    try { $null = $mx.WaitOne() } catch [Threading.AbandonedMutexException] {}   # previous holder died: we own it now
-    try {
+    Invoke-Locked 'ledger' {
         $rows = @(if (Test-Path $script:LedgerPath) { Import-Csv $script:LedgerPath -Encoding utf8 })
         Save-Ledger @(& $Mutate $rows)
-    } finally { $mx.ReleaseMutex(); $mx.Dispose() }
+    }
+}
+
+# Run $LockBody under the machine-wide mutex Global\collab-<LockName> (shared by parallel pipelines).
+function Invoke-Locked([string]$LockName, [scriptblock]$LockBody) {
+    $mx = New-Object Threading.Mutex($false, "Global\collab-$LockName")
+    try { $null = $mx.WaitOne() } catch [Threading.AbandonedMutexException] {}   # previous holder died: we own it now
+    try { & $LockBody } finally { $mx.ReleaseMutex(); $mx.Dispose() }
 }
 
 function Add-LedgerRow([object]$Ctx, [string]$Name, [string]$Flags, [int]$Rc, [datetime]$Start, [string]$ErrLog) {
@@ -344,4 +349,115 @@ function Invoke-ExecutorCore {
     }
     Write-Host "  report: $($Ctx.Report)"
     return 0
+}
+
+# ---- Handover manifests and scope checks ----
+# Every accepted task (pipeline PASS) records the SHA-256 of the files it was allowed to change in
+# collab/logs/<Task>.manifest.json and in the project-wide collab/handover.json (path -> last accepted state).
+# - handover.ps1 -Check: files changed / missing since their last acceptance (a fresh session runs this first).
+# - Task field 「依赖」 / "Depends on": run-pipeline refuses to start while a dependency is not accepted or its files changed since.
+# - Scope check: run-pipeline snapshots the project around every executor run; changes outside 「允许修改的文件」 ("Files allowed to change") are
+#   reported (modified/deleted existing files block the task as NEEDS_CC; new stray files are only a warning).
+
+# Paths listed under 「允许修改的文件」 / "Files allowed to change", relative with / separators; $null when the task has no such section.
+function Get-AllowedPaths([string]$TaskFile) {
+    $text = Get-Content $TaskFile -Raw -Encoding utf8
+    $m = [regex]::Match($text, '(?ms)^## (?:允许修改的文件|Files allowed to change)[^\n]*\n(.*?)(?=^## |\z)')
+    if (-not $m.Success) { return $null }
+    @(foreach ($l in $m.Groups[1].Value -split "`n") {
+        if ($l -match '^\s*-\s+`?([^`\s（(：:，,]+)' -and $Matches[1] -notmatch '\{\{') { ($Matches[1] -replace '^\./', '').Replace('\', '/') }
+    })
+}
+
+# Is <Rel> covered by the allowed list (exact file, directory prefix, or * / ? glob)? collab/reports and logs always are.
+function Test-PathAllowed([string]$Rel, [string[]]$Allowed) {
+    $r = $Rel.Replace('\', '/')
+    if ($r.StartsWith('collab/reports/', 'OrdinalIgnoreCase') -or $r.StartsWith('collab/logs/', 'OrdinalIgnoreCase')) { return $true }
+    foreach ($a in $Allowed) {
+        $d = $a.TrimEnd('/')
+        if ($r -ieq $d -or $r.StartsWith("$d/", 'OrdinalIgnoreCase')) { return $true }
+        if ($a -match '[*?]' -and $r -ilike $a) { return $true }
+    }
+    $false
+}
+
+# path -> "length|mtime" for every project file, skipping build/cache dirs (COLLAB_SNAPSHOT_SKIP adds more names).
+$script:SnapshotSkipDirs = @('.git', '.gradle', 'build', 'node_modules', '.idea', '.kotlin', '.cxx', '__pycache__', '.venv', 'venv', '.vs')
+function Get-ProjectSnapshot([string]$Project, [int]$MaxFiles = 60000) {
+    $skip = $script:SnapshotSkipDirs + @("$env:COLLAB_SNAPSHOT_SKIP" -split '[,;]' | Where-Object { $_ })
+    $snap = @{}; $root = $Project.TrimEnd('\').Length + 1
+    $stack = [Collections.Generic.Stack[IO.DirectoryInfo]]::new(); $stack.Push([IO.DirectoryInfo]::new($Project))
+    while ($stack.Count) {
+        $d = $stack.Pop()
+        try {
+            foreach ($f in $d.EnumerateFiles()) {
+                $snap[$f.FullName.Substring($root).Replace('\', '/')] = "$($f.Length)|$($f.LastWriteTimeUtc.Ticks)"
+                if ($snap.Count -gt $MaxFiles) { return $null }   # too big to watch: caller skips the scope check
+            }
+            foreach ($s in $d.EnumerateDirectories()) {
+                if ($s.Name -in $skip -or ($s.Attributes -band [IO.FileAttributes]::ReparsePoint)) { continue }
+                if ($s.FullName.Substring($root).Replace('\', '/') -ieq 'collab/logs') { continue }
+                $stack.Push($s)
+            }
+        } catch {}
+    }
+    $snap
+}
+
+function Compare-ProjectSnapshot([hashtable]$Before, [hashtable]$After) {
+    foreach ($k in $After.Keys) {
+        if (-not $Before.ContainsKey($k)) { [pscustomobject]@{ path = $k; change = 'added' } }
+        elseif ($Before[$k] -ne $After[$k]) { [pscustomobject]@{ path = $k; change = 'modified' } }
+    }
+    foreach ($k in $Before.Keys) { if (-not $After.ContainsKey($k)) { [pscustomobject]@{ path = $k; change = 'deleted' } } }
+}
+
+# ConvertFrom-Json turns ISO timestamps into [datetime]; show them as yyyy-MM-dd HH:mm:ss either way.
+function Format-When($v) { if ($v -is [datetime]) { $v.ToString('yyyy-MM-dd HH:mm:ss') } else { "$v" -replace 'T', ' ' } }
+
+function Get-Sha256([string]$Path) { (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLower() }
+
+# Record an accepted task: its allowed files (dirs/globs expanded, collab/ excluded) with hashes.
+function Save-TaskHandover([string]$Project, [string]$Task, [string]$Executor) {
+    $allowed = Get-AllowedPaths (Join-Path $Project "collab\tasks\$Task.md")
+    if (-not $allowed) { return $null }
+    $snap = Get-ProjectSnapshot $Project
+    if (-not $snap) { return $null }
+    $files = @(foreach ($rel in ($snap.Keys | Where-Object { $_ -notlike 'collab/*' -and (Test-PathAllowed $_ $allowed) } | Sort-Object)) {
+        $full = Join-Path $Project $rel
+        [pscustomobject]@{ path = $rel; sha256 = Get-Sha256 $full; size = (Get-Item -LiteralPath $full).Length }
+    })
+    $now = (Get-Date).ToString('s')
+    $m = [pscustomobject]@{ task = $Task; executor = $Executor; accepted = $now; files = $files }
+    [IO.File]::WriteAllText((Join-Path $Project "collab\logs\$Task.manifest.json"), ($m | ConvertTo-Json -Depth 4), (New-Object Text.UTF8Encoding $false))
+    $hf = Join-Path $Project 'collab\handover.json'
+    Invoke-Locked 'handover' {
+        $h = if (Test-Path $hf) { Get-Content $hf -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable } else { @{ files = @{} } }
+        if (-not $h.files) { $h.files = @{} }
+        foreach ($f in $files) { $h.files[$f.path] = [ordered]@{ sha256 = $f.sha256; size = $f.size; task = $Task; accepted = $now } }
+        $h.updated = $now
+        [IO.File]::WriteAllText($hf, ($h | ConvertTo-Json -Depth 5), (New-Object Text.UTF8Encoding $false))
+    }
+    $m
+}
+
+# Accepted files whose content no longer matches their last acceptance. -Tasks: only files those tasks delivered,
+# plus a 'not accepted' entry for each of them without a manifest.
+function Test-Handover([string]$Project, [string[]]$Tasks) {
+    $hf = Join-Path $Project 'collab\handover.json'
+    $h = if (Test-Path $hf) { Get-Content $hf -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable } else { @{ files = @{} } }
+    $paths = if ($Tasks) {
+        foreach ($t in $Tasks) {
+            $mf = Join-Path $Project "collab\logs\$t.manifest.json"
+            if (-not (Test-Path $mf)) { [pscustomobject]@{ path = ''; change = 'not accepted'; task = $t; accepted = '' }; continue }
+            (Get-Content $mf -Raw -Encoding utf8 | ConvertFrom-Json).files.path
+        }
+    } else { $h.files.Keys }
+    foreach ($p in @($paths | Where-Object { $_ -is [string] } | Sort-Object -Unique)) {
+        $e = $h.files[$p]; if (-not $e) { continue }
+        $full = Join-Path $Project $p
+        $change = if (-not (Test-Path -LiteralPath $full)) { 'missing' } elseif ((Get-Sha256 $full) -ne $e.sha256) { 'modified' } else { '' }
+        if ($change) { [pscustomobject]@{ path = $p; change = $change; task = $e.task; accepted = $e.accepted } }
+    }
+    $paths | Where-Object { $_ -isnot [string] }   # the 'not accepted' entries
 }

@@ -114,6 +114,8 @@ $COLLAB_HOME\
   bin\
     init-collab.ps1    在某个项目里建 collab\ 目录
     run-executor.ps1   通用派活入口（按 roster.json 白名单）
+    notify.ps1         桌面通知（流水线 / 整批结束时）
+    handover.ps1       交接检查：哪些已验收的文件之后被改过
     visual-review.ps1  视觉验收：审查员逐张看截图对照清单，输出拼图 contact.png
     run-codex.ps1      = run-executor -Executor codex
     run-gemini.ps1     = run-executor -Executor gemini
@@ -172,6 +174,12 @@ $COLLAB_HOME\
   - 单独续跑：`run-executor.ps1 ... -Resume <会话 id> [-ResumePrompt '...']`，会话 id 在该轮 err.log 开头的 `session id:` 一行。
 - **健康探测要核对答案**：派活前（调用方没指定 `-Model` 时）先给默认模型发一道小题（17+25），20 秒内答不对，本轮就改用名册 `fallback_models` 里第一个能答对的（必须同时在 `enabled_models` 里），并打出 WARNING。之所以要核对答案：上游没容量时 `/models` 照常能答，生成却要排队好几分钟；已停用的模型可能秒回 HTTP 200，内容是一句"no longer available"，Codex 拿到会原地空转。
 - **反代模型的上下文窗口**：Codex 没有反代模型的元数据（日志里的 `Model metadata ... not found` 警告），会按很小的默认窗口算，长任务会被压缩（压缩会丢细节）。名册执行者的 `context_window` 字段会作为 `-c model_context_window=N` 传入（`run-executor -ContextWindow N` 可临时覆盖）。这个警告本身消不掉：用 `model_catalog_json` 必须提供完整的系统提示词，所以保留 Codex 的默认提示词。
+- **桌面通知**：流水线结束时弹 Windows 系统通知（通过 / 要 CC 处理 / 无测试，附原因），点一下打开控制台。run-batch 里的流水线带 `-Quiet` 不单独弹，整批结束只弹一条汇总；反代等了 `ProviderWaitMin` 还没恢复也会弹。`bin\notify.ps1` 用系统自带 Windows PowerShell 5.1 的 WinRT 通知接口，不用装东西。关掉：环境变量 `COLLAB_NOTIFY=0` 或名册 `"notify": false`。
+- **交接清单和哈希校验**：
+  - 任务通过时，流水线把它「允许修改的文件」（目录和通配符会展开，`collab\` 除外）逐个算 SHA-256，写进 `collab\logs\<任务>.manifest.json`，并更新全项目的 `collab\handover.json`（每个文件最后一次验收时的哈希，以及是哪个任务验收的）。
+  - `bin\handover.ps1 -Project <目录> [-Task T002]`：列出验收以后被改过、删掉的文件。新会话接手前先跑它，确认 brief.md 的「当前状态」还准。退出码 0 = 全部一致，1 = 有变化，4 = 还没有验收过的任务。
+  - 任务字段「依赖：T002, T003」（或 `Depends on:`）：开工前核对这些任务都已通过、它们交付的文件之后没被改过；不满足就直接 NEEDS_CC，不调用执行者。后面的任务合法改了前面任务的文件也没关系：它通过时会把这些文件的"最后验收状态"更新成自己的。
+  - **越界检查**：每次执行前后给项目拍快照（只比大小和修改时间，跳过 `.git`、`build`、`.gradle`、`node_modules` 等，环境变量 `COLLAB_SNAPSHOT_SKIP` 可加），白名单外的改动记进 pipeline.json：改了或删了已有文件 → 结果改成 NEEDS_CC（执行者不准删文件、也没有原文件，返工修不回来，所以交给 CC 判断）；只是新建了白名单外的文件 → 只记 `stray_files` 警告。实测一个 Android 项目拍一次快照约 0.2 秒。
 - **视觉验收**：任务里有 `## 视觉验收`（或 `## Visual acceptance`）一节时，测试全过后流水线会调用 `visual-review.ps1`。它把截图拼成一张 `collab/logs/<任务>.contact.png`（给 CC 终审时只看这一张），再让视觉模型以只读方式（`codex exec -i`，参考图在前）逐张对照清单检查，结论写进 `collab/logs/<任务>.visual.md`。FAIL 的问题清单作为一轮返工追加进任务文件。审查员本身出错（反代断了、输出格式不对）不阻塞任务，pipeline.json 里记 `reviewer error`，由 CC 看拼图。退出码：0 通过，1 不通过，4 没有这一节，5 没有截图，其他 = 审查员出错。
 - 执行者默认用精简配置运行（`--ignore-user-config`，不加载 Codex 里的插件、MCP 服务和钩子），实测基础 token 少 20–30%。名册里 `clean_config: false` 可以关掉；`reasoning` 设推理强度。
 - **执行者专用环境**（默认开，名册里 `collab_env: false` 可关）：`-c skills.include_instructions=false` 关掉用户个人 Codex 技能列表，再用 `-c developer_instructions` 注入 `executor\AGENTS.md`（其中的 `{{COLLAB_HOME}}` 会替换成实际目录）：沙箱限制、PowerShell 常见坑、工作方式，以及按需读取的技能 `executor\skills\*\SKILL.md`。登录和沙箱配置仍在原来的 `CODEX_HOME`。
